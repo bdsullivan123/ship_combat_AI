@@ -4,7 +4,7 @@ An AI tactical officer for **Elite Dangerous**. TACCOM watches your ship's state
 
 It is an **advisor, not an autopilot**. It never sends input to the game.
 
-> **Status:** Stage 1 (ship-state alerts from game files) works. Stages 2 and 3 not started.
+> **Status:** Stage 1 (alerts from game files) works, with a natural neural voice. Stage 2 (screen reading) reads ammo, heat and hull on the Fer-de-Lance; shield rings and the target's health bars are next. Stage 3 not started.
 
 ---
 
@@ -17,6 +17,7 @@ git clone https://github.com/bdsullivan123/ship_combat_AI.git
 cd ship_combat_AI
 python -m venv .venv
 .venv\Scripts\python -m pip install -e ".[dev]"
+.venv\Scripts\python -m taccom setup        # downloads the neural voice, about 350 MB, once
 
 .venv\Scripts\python -m taccom
 ```
@@ -25,15 +26,28 @@ Start it before or during a game session. It reads the current journal silently 
 
 | Command | What it does |
 |---|---|
-| `python -m taccom` | Watch the game live, speak alerts, and record the session to `sessions/` |
-| `python -m taccom --no-voice` | Same, but print alerts only |
-| `python -m taccom --voice-name Zira --rate 3` | Choose a voice and speaking speed |
-| `python -m taccom voices` | List the Windows voices installed |
+| `python -m taccom` | Watch the game live, read the HUD, speak alerts, and record the session to `sessions/` |
+| `python -m taccom --voice bf_emma --speed 1.2` | Choose the voice and how fast it talks |
+| `python -m taccom --no-voice` | Print alerts only |
+| `python -m taccom --engine sapi` | Use the built-in Windows voice instead of the neural one |
+| `python -m taccom --no-hud` | Don't read the screen; game files only |
+| `python -m taccom --capture` | Also save labelled HUD screenshots during combat, for calibrating new screen readers |
+| `python -m taccom samples` | Write a WAV of each recommended voice to `voice_samples/` so you can pick one |
+| `python -m taccom voices` | List every available voice |
+| `python -m taccom hud <screenshot>` | Read the HUD from a screenshot and print what was found |
 | `python -m taccom replay <file>` | Run a recorded session or a game journal through TACCOM instantly and print what it would have said |
 | `python -m taccom replay <file> --since 2026-10-26T23:38:00Z --until 2026-10-26T23:46:00Z` | Replay only one fight. Earlier events still build ship state, silently |
-| `python -m taccom replay <file> --speed 1 --voice` | Replay in real time, out loud |
+| `python -m taccom replay <file> --realtime 1` | Replay at real speed, out loud |
 
 With no file, `replay` uses your newest game journal. Run the tests with `.venv\Scripts\python -m pytest`.
+
+## The voice
+
+TACCOM speaks with [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), a small open-source neural voice that runs entirely on your PC, with no subscription and no internet needed. The default is `af_heart`. Run `python -m taccom samples` and listen to the files in `voice_samples/` to choose another; British voices start with `bf_`/`bm_`, American with `af_`/`am_`.
+
+A neural voice takes about half a second to say something new on CPU, which is too slow for "shields down". So every line is saved to disk the first time it's said and plays instantly after that, and TACCOM renders all its stock lines ("Hull 1 percent" through "Hull 100 percent", "Shields down", ammo and heat calls) in the background while nothing is happening. The first session with a new voice fills this cache over a few minutes; after that, everything except one-off lines like target scans plays at once.
+
+If the neural voice can't load, TACCOM falls back to the Windows voice, and then to printing.
 
 ## What it says (Stage 1)
 
@@ -59,13 +73,33 @@ How it stays out of your way:
 - **No calls when parked or self-destructing.** It stays silent while docked or landed, and from a self-destruct until you respawn.
 - **Clean ships are ignored.** Scanning a clean ship produces no announcement.
 
-### What Stage 1 can't know yet
+## What it reads off the screen (Stage 2)
 
-These need screen reading (Stage 2), because the game files don't carry them:
+The game files don't report live ammunition or heat below 100%, but the HUD does. While your hardpoints are deployed, TACCOM grabs the Elite window every 1.5 seconds and reads the text panels with [RapidOCR](https://github.com/RapidAI/RapidOCR), which runs on 2 CPU threads in about 0.4 s per read.
 
-- **Your shield percentage.** The files only say whether shields are up or down.
-- **Your target's live health.** `ShipTargeted` reports shields and hull when you lock on or the scan advances, not continuously.
-- **Live ammunition.** The loadout records ammo once and isn't updated while you shoot.
+| Situation | Says | Priority |
+|---|---|---|
+| Heat 85% or more (before it overheats) | "Heat 88 percent." | High |
+| Ammo for a weapon type at 50 / 25 / 10 / 0% | "Multicannon ammo 25 percent." / "Multicannon ammo out." | Normal, then High from 10% |
+| One gun of several runs dry | "One multicannon is dry." | Normal |
+| Heat sinks or chaff used up | "Heat sinks empty." | Normal |
+| Overheating with no heat sinks left | "Overheating. No heat sinks left." | High |
+
+How it avoids acting on a bad read:
+
+- **Two reads must agree.** Nothing is said until the same condition shows up in two reads in a row, so one misread "1200" as "120" stays quiet.
+- **Full ammo comes from your loadout.** It's tracked per fire group, because the panel only shows the current group's weapons.
+- **It only reads when the combat HUD is showing.** That means hardpoints out, not in analysis mode, no panel or map open, and only while Elite is the active window, so nothing else on your desktop is ever captured.
+
+Screen positions are calibrated for the **Fer-de-Lance at 1920×1080 with the default orange HUD**. Other ships put the panels elsewhere, so the HUD reader switches itself off in them until they're calibrated.
+
+### Not read yet
+
+- **Your shield ring percentage.** It's a graphic, not text. The files say up or down.
+- **Your target's live shield and hull bars.** `ShipTargeted` gives a snapshot when you lock on or the scan advances.
+- **Radar contacts.**
+
+These need frames from real fights. `python -m taccom --capture` saves a screenshot every 2 seconds in combat, plus one at every hull hit, shield change and target scan. Each comes with a JSON file of what the game files said at that instant, which is the answer key for calibrating the next readers.
 
 ---
 
@@ -142,11 +176,12 @@ Urgent warnings run locally and use fixed rules, so they never wait on a network
 |---|---|
 | Main application | Python |
 | Watching game files | Polling at 10 Hz (`json`). Simpler and steadier than file-change events for a file rewritten several times a second |
-| Screen capture | `dxcam` or `mss` |
+| Screen capture | `dxcam` (DXGI), falling back to `mss` |
 | Image processing | OpenCV |
+| Text on the HUD | RapidOCR (PP-OCR models on ONNX Runtime) |
 | Reasoning and vision | A vision-capable AI model (API) |
 | Speech recognition | Whisper (local) |
-| Spoken output | Windows SAPI through `pywin32` to start, neural voice later |
+| Spoken output | Kokoro neural voice (`kokoro-onnx`, `sounddevice`), with Windows SAPI as fallback |
 | Desktop UI (later) | PySide6, or React + Tauri |
 
 ---
@@ -161,10 +196,16 @@ Urgent warnings run locally and use fixed rules, so they never wait on a network
 - [x] Log every session so alerts can be replayed and tested offline
 - [x] Regression test built from a real fight (`tests/fixtures/clipper_fight_2026-10-26.log`)
 
-### Stage 2 — Combat HUD interpretation
-- [ ] Calibrate HUD regions for the target resolution
-- [ ] Read own shield and hull gauges from screen
-- [ ] Read target info when it isn't already in the journal
+### Stage 2 — Combat HUD interpretation (in progress)
+- [x] Natural neural voice with instant playback for stock lines
+- [x] Capture the Elite window only, and only while it is active
+- [x] Calibrate HUD regions for the Fer-de-Lance at 1920×1080
+- [x] Read ammunition, heat sinks, chaff, heat %, hull % and target panel text
+- [x] Heat, ammo and empty-utility alerts, with two-read confirmation
+- [x] Labelled frame capture during combat (`--capture`)
+- [ ] Read own shield ring percentage
+- [ ] Read target shield and hull bars live ("target nearly destroyed")
+- [ ] Layouts for other ships
 - [ ] Experimental: radar contacts and "enemy behind you" warnings
 - [ ] Test every visual reader against recorded footage before enabling it live
 
@@ -184,7 +225,9 @@ Urgent warnings run locally and use fixed rules, so they never wait on a network
 | `taccom/flags.py` | `Status.json` bit flags |
 | `taccom/state.py` | The live ship state, updated from both sources |
 | `taccom/alerts.py` | The alert rules, priorities and cooldowns. Edit here to change what TACCOM says |
-| `taccom/speech.py` | Speech queue and Windows voice |
+| `taccom/speech.py` | Speech queue, neural voice with on-disk cache, Windows voice fallback |
+| `taccom/capture.py` | Elite window capture and labelled frame collection |
+| `taccom/hud.py` | HUD layouts, the OCR reader, and the background HUD watcher |
 | `taccom/app.py` | Wiring, live loop, session recording and replay |
 | `taccom/__main__.py` | Command line |
 

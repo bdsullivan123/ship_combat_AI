@@ -28,3 +28,15 @@ def test_stale_alerts_are_dropped():
     q.push(alert("hull critical", Priority.CRITICAL), 0.0)
     assert q.next(10.0).text == "hull critical"
     assert q.next(10.0) is None
+
+
+def test_voice_cache_round_trip(tmp_path):
+    np = __import__("pytest").importorskip("numpy")
+    from taccom.speech import VoiceCache
+
+    cache = VoiceCache(tmp_path)
+    assert cache.get("Shields down.") is None
+    cache.put("Shields down.", np.array([0.1, -0.2], dtype=np.float64))
+    assert cache.has("Shields down.")
+    assert cache.get("Shields down.").dtype == np.float32
+    assert not cache.has("Shields back online.")

@@ -81,10 +81,12 @@ class Target:
 class ShipState:
     commander: str | None = None
     ship: str | None = None
+    ship_type: str | None = None  # journal's internal name, e.g. "ferdelance"
     flags: Flags = Flags(0)
     flags2: Flags2 = Flags2(0)
     pips: tuple[int, int, int] | None = None  # SYS, ENG, WEP in half-pips (0-8)
     fire_group: int | None = None
+    gui_focus: int = 0  # 0 = cockpit view; anything else is a panel or map covering the HUD
     fuel_main: float | None = None
     fuel_reservoir: float | None = None
     fuel_capacity: float | None = None
@@ -92,6 +94,8 @@ class ShipState:
     hull: float | None = None  # 0-1
     shields_up: bool | None = None
     modules: list[str] = field(default_factory=list)
+    ammo_capacity: dict[str, list[int]] = field(default_factory=dict)  # rounds per gun when full
+    heatsinks_left: int | None = None  # read off the HUD; None until seen
     target: Target | None = None
     in_combat: bool = False
     self_destructing: bool = False
@@ -122,6 +126,7 @@ class ShipState:
         pips = status.get("Pips")
         self.pips = tuple(pips) if pips and len(pips) == 3 else None
         self.fire_group = status.get("FireGroup")
+        self.gui_focus = status.get("GuiFocus", 0)
         fuel = status.get("Fuel")
         if fuel:
             self.fuel_main = fuel.get("FuelMain")
@@ -131,19 +136,27 @@ class ShipState:
             self.shields_up = bool(new & Flags.SHIELDS_UP)
         return rising, falling
 
+    def apply_hud(self, reading) -> None:
+        sink = reading.utility("HEATSINK")
+        if sink is not None:
+            self.heatsinks_left = sink.total
+
     def apply_journal(self, e: dict) -> None:
         ev = e.get("event")
         if ev == "LoadGame":
             self.commander = e.get("Commander")
             self.ship = ship_display_name(e)
+            self.ship_type = str(e.get("Ship", "")).lower() or None
             self.fuel_capacity = e.get("FuelCapacity")
             self.target = None
             self.in_combat = False
             self.self_destructing = False
         elif ev == "Loadout":
             self.ship = ship_display_name(e)
+            self.ship_type = str(e.get("Ship", "")).lower() or None
             self.hull = e.get("HullHealth", self.hull)
             self.modules = [m.get("Item", "").lower() for m in e.get("Modules", [])]
+            self.ammo_capacity = ammo_capacity(e.get("Modules", []))
             cap = e.get("FuelCapacity")
             if isinstance(cap, dict):
                 self.fuel_capacity = cap.get("Main")
@@ -165,6 +178,33 @@ class ShipState:
                 self.hull = 1.0
         elif ev == "RepairAll":
             self.hull = 1.0
+
+
+def ammo_kind(name: str) -> str:
+    """'MULTI-CANNON' (HUD) and 'hpt_multicannon_gimbal_huge' (journal) -> 'multicannon'."""
+    letters = "".join(c for c in name.lower() if c.isalpha())
+    if "fragment" in letters or "slugshot" in letters:  # the journal calls frag cannons "slugshot"
+        return "fragcannon"
+    for kind in ("multicannon", "railgun", "plasmaaccelerator", "cannon", "missile",
+                 "torpedo", "mine", "heatsink", "chaff", "shieldcell", "ecm"):
+        if kind in letters:
+            return kind
+    return letters
+
+
+def ammo_capacity(modules: list[dict]) -> dict[str, list[int]]:
+    """Rounds per gun, by kind: {"multicannon": [2190, 2190, 2190]}.
+
+    Loadout is usually written after rearming, so this is normally "full".
+    If it was written mid-flight it undercounts; the alert rules take the
+    larger of this and what they have seen on the HUD.
+    """
+    guns: dict[str, list[int]] = {}
+    for m in modules:
+        if "AmmoInHopper" in m:
+            kind = ammo_kind(m.get("Item", ""))
+            guns.setdefault(kind, []).append(m.get("AmmoInClip", 0) + m["AmmoInHopper"])
+    return guns
 
 
 def target_from_event(e: dict) -> Target | None:

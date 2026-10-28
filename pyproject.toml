@@ -1,11 +1,19 @@
 [project]
 name = "taccom"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tactical combat copilot for Elite Dangerous"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pywin32>=306; sys_platform == 'win32'",
+    # Neural voice
+    "kokoro-onnx>=0.4.7",
+    "sounddevice>=0.5",
+    # Screen reading
+    "dxcam>=0.3; sys_platform == 'win32'",
+    "mss>=10",
+    "opencv-python>=4.10",
+    "rapidocr>=3.0",
 ]
 
 [project.optional-dependencies]

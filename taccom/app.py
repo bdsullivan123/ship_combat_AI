@@ -16,17 +16,22 @@ POLL_INTERVAL = 0.1  # seconds; Status.json updates a few times a second at most
 
 
 class Taccom:
-    def __init__(self, speaker, recorder: "SessionRecorder | None" = None, echo=print):
+    def __init__(self, speaker, recorder: "SessionRecorder | None" = None, echo=print, collector=None,
+                 hud=None):
         self.state = ShipState()
         self.engine = AlertEngine()
         self.speaker = speaker
         self.recorder = recorder
+        self.collector = collector  # capture.FrameCollector, when --capture is on
+        self.hud = hud  # hud.HudWatcher, when screen reading is on
         self.echo = echo
 
     def handle_journal(self, event: dict, now: float, announce: bool = True) -> list[Alert]:
         if self.recorder:
             self.recorder.write("journal", event, live=announce)
         self.state.apply_journal(event)
+        if self.collector and announce:
+            self.collector.on_journal(event, self.state, now)
         alerts = self.engine.on_journal(event, self.state, now) if announce else []
         self._emit(alerts, event.get("timestamp"))
         return alerts
@@ -37,6 +42,14 @@ class Taccom:
         rising, falling = self.state.apply_status(status)
         alerts = self.engine.on_status(rising, falling, self.state, now) if announce else []
         self._emit(alerts, status.get("timestamp"))
+        return alerts
+
+    def handle_hud(self, reading, now: float) -> list[Alert]:
+        if self.recorder:
+            self.recorder.write("hud", reading_to_dict(reading))
+        self.state.apply_hud(reading)
+        alerts = self.engine.on_hud(reading, self.state, now)
+        self._emit(alerts, None)
         return alerts
 
     def say(self, text: str, priority: Priority = Priority.LOW, now: float = 0.0) -> None:
@@ -75,6 +88,12 @@ def run_live(app: Taccom, journal_dir: Path) -> None:
         snapshot = status.poll()
         if snapshot:
             app.handle_status(snapshot, now)
+        if app.collector:
+            app.collector.tick(app.state, now)
+        if app.hud:
+            app.hud.update(app.state)
+            for reading in app.hud.readings():
+                app.handle_hud(reading, now)
         time.sleep(POLL_INTERVAL)
 
 
@@ -98,6 +117,18 @@ class SessionRecorder:
 
     def close(self) -> None:
         self._file.close()
+
+
+def reading_to_dict(reading) -> dict:
+    from dataclasses import asdict
+
+    return asdict(reading)
+
+
+def reading_from_dict(data: dict):
+    from .hud import HudReading, Weapon
+
+    return HudReading(**{**data, "weapons": [Weapon(**w) for w in data.get("weapons", [])]})
 
 
 def _parse_ts(ts: str) -> float:
@@ -152,3 +183,5 @@ def replay(app: Taccom, inputs: Iterable[tuple[float, str, dict, bool]], speed: 
             app.handle_journal(data, t)
         elif src == "status":
             app.handle_status(data, t)
+        elif src == "hud":
+            app.handle_hud(reading_from_dict(data), t)
