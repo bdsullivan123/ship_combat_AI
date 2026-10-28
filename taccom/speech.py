@@ -25,7 +25,7 @@ from .alerts import Alert, Priority
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 KOKORO_MODEL = MODELS_DIR / "kokoro-v1.0.onnx"
 KOKORO_VOICES = MODELS_DIR / "voices-v1.0.bin"
-DEFAULT_KOKORO_VOICE = "af_heart"
+DEFAULT_KOKORO_VOICE = "bf_isabella"
 
 # How long an alert stays worth saying after it happened, in seconds.
 MAX_AGE = {

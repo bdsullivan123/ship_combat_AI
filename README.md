@@ -43,7 +43,7 @@ With no file, `replay` uses your newest game journal. Run the tests with `.venv\
 
 ## The voice
 
-TACCOM speaks with [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), a small open-source neural voice that runs entirely on your PC, with no subscription and no internet needed. The default is `af_heart`. Run `python -m taccom samples` and listen to the files in `voice_samples/` to choose another; British voices start with `bf_`/`bm_`, American with `af_`/`am_`.
+TACCOM speaks with [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), a small open-source neural voice that runs entirely on your PC, with no subscription and no internet needed. The default is `bf_isabella`. Run `python -m taccom samples` and listen to the files in `voice_samples/` to choose another; British voices start with `bf_`/`bm_`, American with `af_`/`am_`.
 
 A neural voice takes about half a second to say something new on CPU, which is too slow for "shields down". So every line is saved to disk the first time it's said and plays instantly after that, and TACCOM renders all its stock lines ("Hull 1 percent" through "Hull 100 percent", "Shields down", ammo and heat calls) in the background while nothing is happening. The first session with a new voice fills this cache over a few minutes; after that, everything except one-off lines like target scans plays at once.
 
