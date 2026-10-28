@@ -24,11 +24,14 @@ class Taccom:
         self.recorder = recorder
         self.collector = collector  # capture.FrameCollector, when --capture is on
         self.hud = hud  # hud.HudWatcher, when screen reading is on
+        self.replaying = False
+        self._last_ts: str | None = None
         self.echo = echo
 
     def handle_journal(self, event: dict, now: float, announce: bool = True) -> list[Alert]:
         if self.recorder:
             self.recorder.write("journal", event, live=announce)
+        self._last_ts = event.get("timestamp", self._last_ts)
         self.state.apply_journal(event)
         if self.collector and announce:
             self.collector.on_journal(event, self.state, now)
@@ -39,6 +42,7 @@ class Taccom:
     def handle_status(self, status: dict, now: float, announce: bool = True) -> list[Alert]:
         if self.recorder:
             self.recorder.write("status", status, live=announce)
+        self._last_ts = status.get("timestamp", self._last_ts)
         rising, falling = self.state.apply_status(status)
         alerts = self.engine.on_status(rising, falling, self.state, now) if announce else []
         self._emit(alerts, status.get("timestamp"))
@@ -49,7 +53,9 @@ class Taccom:
             self.recorder.write("hud", reading_to_dict(reading))
         self.state.apply_hud(reading)
         alerts = self.engine.on_hud(reading, self.state, now)
-        self._emit(alerts, None)
+        # Screen reads carry no game timestamp. Live, "now" is right; in a
+        # replay, the last game event's time is the closest thing to it.
+        self._emit(alerts, self._last_ts if self.replaying else None)
         return alerts
 
     def say(self, text: str, priority: Priority = Priority.LOW, now: float = 0.0) -> None:
@@ -57,7 +63,8 @@ class Taccom:
 
     def _emit(self, alerts: list[Alert], timestamp: str | None) -> None:
         for a in alerts:
-            stamp = timestamp[11:19] if timestamp else datetime.now().strftime("%H:%M:%S")
+            when = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone() if timestamp else datetime.now()
+            stamp = when.strftime("%H:%M:%S")  # local time, whatever the source
             self.echo(f"{stamp}  {a.priority.name:<8}  {a.text}")
             if self.recorder:
                 self.recorder.write("alert", {"key": a.key, "text": a.text, "priority": a.priority.name})
@@ -166,6 +173,7 @@ def read_inputs(path: Path, since: str | None = None, until: str | None = None) 
 
 def replay(app: Taccom, inputs: Iterable[tuple[float, str, dict, bool]], speed: float | None) -> None:
     """Feed recorded inputs through the app. speed=None runs instantly."""
+    app.replaying = True
     start_t = None
     start_wall = time.monotonic()
     for t, src, data, live in inputs:

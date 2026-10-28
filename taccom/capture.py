@@ -116,7 +116,7 @@ class FrameCollector:
 
     def on_journal(self, event: dict, state: ShipState, now: float) -> None:
         name = event.get("event")
-        if name not in LABEL_EVENTS:
+        if name not in LABEL_EVENTS or state.destroyed:
             return
         if name == "ShipTargeted" and not event.get("TargetLocked"):
             return
@@ -127,7 +127,7 @@ class FrameCollector:
         self._request(name, event, state)
 
     def tick(self, state: ShipState, now: float) -> None:
-        fighting = state.in_combat or bool(state.flags & Flags.HARDPOINTS_DEPLOYED)
+        fighting = (state.in_combat or bool(state.flags & Flags.HARDPOINTS_DEPLOYED)) and not state.destroyed
         if fighting and now - self._last_periodic >= self.interval:
             self._last_periodic = now
             self._request("periodic", None, state)

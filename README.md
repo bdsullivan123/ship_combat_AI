@@ -4,7 +4,7 @@ An AI tactical officer for **Elite Dangerous**. TACCOM watches your ship's state
 
 It is an **advisor, not an autopilot**. It never sends input to the game.
 
-> **Status:** Stage 1 (alerts from game files) works, with a natural neural voice. Stage 2 (screen reading) reads ammo, heat and hull on the Fer-de-Lance; shield rings and the target's health bars are next. Stage 3 not started.
+> **Status:** Stage 1 (alerts from game files) works, with a natural neural voice. Stage 2 (screen reading) reads shields, hull, target health, heat and ammo on the Fer-de-Lance, through head movement; radar and other ships are next. Stage 3 not started.
 
 ---
 
@@ -75,31 +75,44 @@ How it stays out of your way:
 
 ## What it reads off the screen (Stage 2)
 
-The game files don't report live ammunition or heat below 100%, but the HUD does. While your hardpoints are deployed, TACCOM grabs the Elite window every 1.5 seconds and reads the text panels with [RapidOCR](https://github.com/RapidAI/RapidOCR), which runs on 2 CPU threads in about 0.4 s per read.
+The game files don't report your shield percentage, your target's health, live ammunition, or heat below 100%, but the HUD shows all of them. The journal also stops reporting hull damage at around 20%. While your hardpoints are deployed, TACCOM grabs the Elite window every 1.5 seconds and reads:
+
+- **Your shields and hull**, the two percentages on your ship's hologram
+- **Your target's shields and hull**, from the target hologram
+- **Heat**, next to the radar
+- **Ammo** for each gun, plus heat sinks and chaff, from the weapon panel (every third read, since ammo changes slowly)
 
 | Situation | Says | Priority |
 |---|---|---|
+| Your shields at 50% / 25% | "Shields 50 percent." / "Shields 25 percent. Four pips to systems." | Normal / High |
+| Your hull below 15, 10 and 5% (past the journal's last report) | "Hull critical, 10 percent. Disengage now." | Critical |
+| Target's shields gone | "Target shields down." | Normal |
+| Target's hull at 25% and 10% | "Target hull 22 percent." | Normal |
 | Heat 85% or more (before it overheats) | "Heat 88 percent." | High |
 | Ammo for a weapon type at 50 / 25 / 10 / 0% | "Multicannon ammo 25 percent." / "Multicannon ammo out." | Normal, then High from 10% |
 | One gun of several runs dry | "One multicannon is dry." | Normal |
 | Heat sinks or chaff used up | "Heat sinks empty." | Normal |
 | Overheating with no heat sinks left | "Overheating. No heat sinks left." | High |
 
-How it avoids acting on a bad read:
+### Following your head
+
+In combat, your view shifts constantly with G-forces, impacts and looking around. In the 2026-10-27 fight it moved the whole cockpit by up to 240 px, tilted it by up to 7° and zoomed it by 15%, so fixed screen positions don't work. Every frame is first lined up with a reference frame of the cockpit, using features on the physical dashboard (ORB keypoints plus RANSAC with OpenCV). The frame is then warped back into the reference pose before anything is read. When the dashboard is too far out of view to line up reliably, the frame is skipped. The text is read with [RapidOCR](https://github.com/RapidAI/RapidOCR). A routine read takes about 0.5 s on 2 CPU threads.
+
+### How it avoids acting on a bad read
 
 - **Two reads must agree.** Nothing is said until the same condition shows up in two reads in a row, so one misread "1200" as "120" stays quiet.
+- **Numbers are matched by position.** Each percentage goes to the value expected at that spot on the hologram, and impossible values like a "190%" shield are discarded.
+- **Shields count only while the game says they're up.** While they're down, the number on the hologram is the recharge progress, not shield strength.
+- **Target calls need the same target in both reads,** and they reset when you switch targets.
 - **Full ammo comes from your loadout.** It's tracked per fire group, because the panel only shows the current group's weapons.
-- **It only reads when the combat HUD is showing.** That means hardpoints out, not in analysis mode, no panel or map open, and only while Elite is the active window, so nothing else on your desktop is ever captured.
+- **It only reads when the combat HUD is showing.** That means hardpoints out, not in analysis mode, no panel or map open, not after the ship is destroyed, and only while Elite is the active window, so nothing else on your desktop is ever captured.
 
-Screen positions are calibrated for the **Fer-de-Lance at 1920×1080 with the default orange HUD**. Other ships put the panels elsewhere, so the HUD reader switches itself off in them until they're calibrated.
+The reader is calibrated for the **Fer-de-Lance at 1920×1080 with the default orange HUD** (reference frame: `taccom/layouts/ferdelance_1080p.jpg`). Other ships have different cockpits, so the reader switches itself off in them until they're calibrated.
 
 ### Not read yet
 
-- **Your shield ring percentage.** It's a graphic, not text. The files say up or down.
-- **Your target's live shield and hull bars.** `ShipTargeted` gives a snapshot when you lock on or the scan advances.
-- **Radar contacts.**
-
-These need frames from real fights. `python -m taccom --capture` saves a screenshot every 2 seconds in combat, plus one at every hull hit, shield change and target scan. Each comes with a JSON file of what the game files said at that instant, which is the answer key for calibrating the next readers.
+- **Radar contacts**, for "enemy behind you" warnings.
+- **Other ships' cockpits.** Fly one with `python -m taccom --capture` to collect frames for its layout. The capture saves a screenshot every 2 seconds in combat, plus one at every hull hit, shield change and target scan. Each comes with a JSON file of what the game files said at that instant, which serves as the answer key.
 
 ---
 
@@ -200,14 +213,13 @@ Urgent warnings run locally and use fixed rules, so they never wait on a network
 - [x] Natural neural voice with instant playback for stock lines
 - [x] Capture the Elite window only, and only while it is active
 - [x] Calibrate HUD regions for the Fer-de-Lance at 1920×1080
-- [x] Read ammunition, heat sinks, chaff, heat %, hull % and target panel text
-- [x] Heat, ammo and empty-utility alerts, with two-read confirmation
+- [x] Follow head movement: align every frame to a reference cockpit before reading
+- [x] Read own shields and hull, target shields and hull, heat, ammunition, heat sinks, chaff
+- [x] Shield, hull, target, heat, ammo and empty-utility alerts, with two-read confirmation
 - [x] Labelled frame capture during combat (`--capture`)
-- [ ] Read own shield ring percentage
-- [ ] Read target shield and hull bars live ("target nearly destroyed")
+- [x] Test the readers against recorded footage (`tests/fixtures/fas_fight_2026-10-27.jsonl`, three real frames)
 - [ ] Layouts for other ships
 - [ ] Experimental: radar contacts and "enemy behind you" warnings
-- [ ] Test every visual reader against recorded footage before enabling it live
 
 ### Stage 3 — Conversational tactical officer
 - [ ] Push-to-talk voice questions
@@ -227,7 +239,8 @@ Urgent warnings run locally and use fixed rules, so they never wait on a network
 | `taccom/alerts.py` | The alert rules, priorities and cooldowns. Edit here to change what TACCOM says |
 | `taccom/speech.py` | Speech queue, neural voice with on-disk cache, Windows voice fallback |
 | `taccom/capture.py` | Elite window capture and labelled frame collection |
-| `taccom/hud.py` | HUD layouts, the OCR reader, and the background HUD watcher |
+| `taccom/hud.py` | Cockpit alignment, HUD layouts, the OCR reader, and the background HUD watcher |
+| `taccom/layouts/` | Reference frame for each calibrated cockpit |
 | `taccom/app.py` | Wiring, live loop, session recording and replay |
 | `taccom/__main__.py` | Command line |
 

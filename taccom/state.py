@@ -99,6 +99,7 @@ class ShipState:
     target: Target | None = None
     in_combat: bool = False
     self_destructing: bool = False
+    destroyed: bool = False  # from Died until respawn; Status.json doesn't change meanwhile
     status_seen: bool = False
 
     @property
@@ -151,6 +152,7 @@ class ShipState:
             self.target = None
             self.in_combat = False
             self.self_destructing = False
+            self.destroyed = False
         elif ev == "Loadout":
             self.ship = ship_display_name(e)
             self.ship_type = str(e.get("Ship", "")).lower() or None
@@ -173,6 +175,7 @@ class ShipState:
         elif ev in ("Died", "Resurrect"):
             self.target = None
             self.in_combat = False
+            self.destroyed = ev == "Died"
             if ev == "Resurrect":
                 self.self_destructing = False
                 self.hull = 1.0

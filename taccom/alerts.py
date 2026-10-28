@@ -52,6 +52,9 @@ DANGEROUS_RANKS = {"Dangerous", "Deadly", "Elite"}
 # Screen-read (Stage 2) thresholds.
 HEAT_WARNING = 85  # percent; the game's own overheating flag only fires past 100
 AMMO_STEPS = (50, 25, 10, 0)  # percent of full, announced once each per magazine load
+SHIELD_STEPS = (50, 25)
+SCREEN_HULL_STEPS = (15, 10, 5)  # below the journal's last hull report (~20%)
+TARGET_HULL_STEPS = (25, 10)
 UTILITY_NAMES = {"heatsink": "Heat sinks", "chaff": "Chaff", "shieldcell": "Shield cells", "ecm": "ECM"}
 WEAPON_NAMES = {"multicannon": "Multicannon", "railgun": "Railgun", "fragcannon": "Frag cannon",
                 "cannon": "Cannon", "missile": "Missile", "torpedo": "Torpedo", "mine": "Mine",
@@ -78,6 +81,10 @@ class AlertEngine:
         self._last_attacked: float | None = None
         self._announced_targets: set[tuple] = set()
         self._hud_prev = None
+        self._hud_prev_target = None
+        self._hud_prev_weapons = None
+        self._steps_announced: dict[str, set[int]] = {}
+        self._steps_target = None
         self._ammo_announced: dict[str, set[int]] = {}
         self._ammo_seen_max: dict[tuple, int] = {}
         self._dry_announced: set[tuple] = set()
@@ -153,25 +160,74 @@ class AlertEngine:
         Screen reads can be wrong, so a condition must hold in two reads in a
         row before anything is said. One misread "1200" as "120" stays quiet.
         """
+        target_key = state.target.key if state.target else None
         prev, self._hud_prev = self._hud_prev, reading
-        if prev is None or state.self_destructing:
+        prev_target, self._hud_prev_target = self._hud_prev_target, target_key
+        if reading.weapons_read:
+            prev_weapons, self._hud_prev_weapons = self._hud_prev_weapons, reading
+        else:
+            prev_weapons = None
+        if prev is None or state.self_destructing or state.destroyed:
             return []
         out: list[Alert] = []
 
-        if (reading.heat is not None and prev.heat is not None
-                and min(reading.heat, prev.heat) >= HEAT_WARNING
-                and not state.flags & Flags.OVERHEATING):
-            out.append(Alert("heat", f"Heat {min(reading.heat, prev.heat)} percent.", Priority.HIGH, now))
+        heat = _both(reading.heat, prev.heat, min)
+        if heat is not None and heat >= HEAT_WARNING and not state.flags & Flags.OVERHEATING:
+            out.append(Alert("heat", f"Heat {heat} percent.", Priority.HIGH, now))
 
-        now_by_kind, prev_by_kind = _ammo_by_kind(reading.weapons), _ammo_by_kind(prev.weapons)
-        for kind, cur in now_by_kind.items():  # in panel order, so alerts come out in a stable order
-            old = prev_by_kind.get(kind)
-            if old is None:
-                continue
-            if len(cur) != len(old):
-                continue  # a line was missed in one read; positions can't be matched
-            out.extend(self._ammo(kind, cur, old, state, now))
+        # The percentage under the hologram is the recharge level while
+        # shields are down, so only trust it while the game says they're up.
+        shields = _both(reading.shields, prev.shields, max)
+        if shields is not None and state.shields_up:
+            step = self._crossed("shields", shields, SHIELD_STEPS, rearm=10)
+            if step == 25:
+                text = "Shields 25 percent." + (" Four pips to systems." if state.pips and state.pips[0] < 8 else "")
+                out.append(Alert("shields_low", text, Priority.HIGH, now))
+            elif step == 50:
+                out.append(Alert("shields_low", "Shields 50 percent.", Priority.NORMAL, now))
+
+        # The journal stops reporting hull damage around 20%; the HUD doesn't.
+        hull = _both(reading.hull, prev.hull, max)
+        if hull is not None and self._crossed("hull_screen", hull, SCREEN_HULL_STEPS) is not None:
+            out.append(self._hull({"Health": hull / 100, "PlayerPilot": True}, state, now))
+
+        if target_key is None or target_key != prev_target:
+            pass  # no target, or it changed between the two reads
+        else:
+            if target_key != self._steps_target:
+                self._steps_target = target_key
+                self._steps_announced.pop("target_shields", None)
+                self._steps_announced.pop("target_hull", None)
+            t_shields = _both(reading.target_shields, prev.target_shields, max)
+            if t_shields is not None and self._crossed("target_shields", t_shields, (0,), rearm=10) is not None:
+                out.append(Alert("target_shields", "Target shields down.", Priority.NORMAL, now))
+            t_hull = _both(reading.target_hull, prev.target_hull, max)
+            if t_hull is not None and self._crossed("target_hull", t_hull, TARGET_HULL_STEPS) is not None:
+                out.append(Alert("target_hull", f"Target hull {t_hull} percent.", Priority.NORMAL, now))
+
+        if prev_weapons is not None:
+            now_by_kind, prev_by_kind = _ammo_by_kind(reading.weapons), _ammo_by_kind(prev_weapons.weapons)
+            for kind, cur in now_by_kind.items():  # in panel order, so alerts come out in a stable order
+                old = prev_by_kind.get(kind)
+                if old is None or len(cur) != len(old):
+                    continue  # a line was missed in one read; positions can't be matched
+                out.extend(self._ammo(kind, cur, old, state, now))
         return self._gate(out)
+
+    def _crossed(self, key: str, value: int, steps: tuple[int, ...], rearm: int = 5) -> int | None:
+        """The lowest not-yet-announced step that value has fallen to, if any.
+
+        Steps re-arm once the value climbs back above them (recharge, repair,
+        rearm), so the next fall is announced again.
+        """
+        announced = self._steps_announced.setdefault(key, set())
+        announced -= {step for step in announced if value > step + rearm}
+        crossed = [step for step in steps if value <= step and step not in announced]
+        if not crossed:
+            return None
+        step = min(crossed)
+        announced.update(st for st in steps if st >= step)
+        return step
 
     def _ammo(self, kind: str, cur: list[int], old: list[int], state: ShipState, now: float) -> list[Alert]:
         total = max(sum(cur), sum(old))  # the higher read: both must agree it's low
@@ -202,13 +258,8 @@ class AlertEngine:
         full = max(sum(loadout) if len(loadout) == len(cur) else 0, self._ammo_seen_max[group])
         if not full:
             return out
-        pct = 100 * total / full
-        announced = self._ammo_announced.setdefault(kind, set())
-        announced -= {step for step in announced if pct > step + 5}  # rearmed or synthesised
-        crossed = [step for step in AMMO_STEPS if pct <= step and step not in announced]
-        if crossed:
-            step = min(crossed)
-            announced.update(st for st in AMMO_STEPS if st >= step)
+        step = self._crossed(f"ammo:{kind}", 100 * total / full, AMMO_STEPS)  # re-arms after rearming
+        if step is not None:
             text = f"{name} ammo out." if step == 0 else f"{name} ammo {step} percent."
             priority = Priority.HIGH if step <= 10 else Priority.NORMAL
             out.append(Alert(f"ammo:{kind}", text, priority, now))
@@ -309,6 +360,9 @@ class AlertEngine:
             phrases += [f"{name} ammo {step} percent." for step in AMMO_STEPS if step]
             phrases += [f"{name} ammo out.", f"One {name.lower()} is dry."]
         phrases += [f"{name} empty." for name in UTILITY_NAMES.values()]
+        phrases += ["Shields 50 percent.", "Shields 25 percent.", "Shields 25 percent. Four pips to systems.",
+                    "Target shields down."]
+        phrases += [f"Target hull {h} percent." for h in range(TARGET_HULL_STEPS[0] + 1)]
         phrases += ["Fuel low.", "Fighter destroyed.", "Shields back online.", "Taking fire."]
         for h in range(25, 101):
             phrases.append(engine._hull({"Health": h / 100, "PlayerPilot": True}, full_pips, 0).text)
@@ -335,3 +389,8 @@ def _ammo_by_kind(weapons) -> dict[str, list[int]]:
     for w in weapons:
         out.setdefault(ammo_kind(w.name), []).append(w.total)
     return out
+
+
+def _both(a: int | None, b: int | None, pick) -> int | None:
+    """Combine two reads of one value, or None unless both reads saw it."""
+    return None if a is None or b is None else pick(a, b)

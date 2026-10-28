@@ -57,3 +57,25 @@ def test_recorded_session_round_trip(tmp_path):
 
     said, _ = run(recorder.path)
     assert said == ["Shields down. Four pips to systems."]
+
+
+def test_federal_assault_ship_fight_with_screen_reading():
+    """2026-10-27: journal and status as recorded, plus HUD readings from the captured frames.
+
+    The journal's last hull report was 20%; the HUD carried on down to 2%.
+    """
+    said, app = run(FIXTURES / "fas_fight_2026-10-27.jsonl")
+    assert said == [
+        "Taking fire.",
+        "Shields down. Four pips to systems.",
+        "Hull 80 percent.",
+        "Hull 60 percent.",
+        "Hull 38 percent. Consider disengaging.",
+        "Hull critical, 20 percent. Disengage now. Four pips to engines.",
+        "Hull critical, 14 percent. Disengage now. Four pips to engines.",
+        "Hull critical, 10 percent. Disengage now. Four pips to engines.",
+        "Hull critical, 4 percent. Disengage now.",
+        "Taking fire.",
+        "Ship lost.",
+    ]
+    assert not app.state.destroyed  # the recording runs on through the rebuy and respawn
