@@ -41,6 +41,7 @@ def test_reads_through_head_movement(reader):
     reading = reader.read(load("hud_fdl_1080p_moved.jpg"), ALL_REGIONS)
     assert (reading.shields, reading.hull, reading.heat) == (62, 100, 43)
     assert (reading.target_shields, reading.target_hull) == (86, 100)
+    assert reading.target_shields_up is True
     assert [w.total for w in reading.weapons if w.name == "MULTI-CANNON"] == [2180, 2164, 2164]
 
 
@@ -193,19 +194,49 @@ def test_screen_hull_covers_what_the_journal_stops_reporting():
                     "Hull critical, 4 percent. Disengage now."]
 
 
-def test_target_calls_once_per_target():
+def shields(up, hull=None, target_hull=None):
+    return HudReading(target_shields_up=up, target_hull=target_hull)
+
+
+def test_target_shields_down_and_back_online():
+    from taccom.state import Target
+
+    engine, state = AlertEngine(), fdl_state()
+    state.target = Target("Cobra Mk III", 3, "Martin Watson")
+    # Up on a fresh target: nothing to say. Then down, an unreadable frame, and back up.
+    said = say(engine, state, shields(True), shields(True), shields(True), shields(False), shields(False),
+               shields(None), shields(False), shields(True), shields(None), shields(True))
+    assert said == ["Target shields down.", "Target shields back online."]
+
+
+def test_one_odd_frame_does_not_flip_target_shields():
+    from taccom.state import Target
+
+    engine, state = AlertEngine(), fdl_state()
+    state.target = Target("Viper Mk IV", 3, "Hope Coll")
+    said = say(engine, state, shields(True), shields(True), shields(False), shields(True), shields(True))
+    assert said == []
+
+
+def test_target_found_with_shields_already_down():
+    from taccom.state import Target
+
+    engine, state = AlertEngine(), fdl_state()
+    state.target = Target("Adder", 3, "John J Shepard")
+    assert say(engine, state, shields(False), shields(False), shields(False)) == ["Target shields down."]
+
+
+def test_target_hull_calls_once_per_target():
     from taccom.state import Target
 
     engine, state = AlertEngine(), fdl_state()
     state.target = Target("Federal Assault Ship", 3, "Peter Smith")
-    said = say(engine, state, numbers(target_shields=12, target_hull=100), numbers(target_shields=0, target_hull=100),
-               numbers(target_shields=0, target_hull=60), numbers(target_shields=0, target_hull=22),
-               numbers(target_shields=0, target_hull=21), numbers(target_shields=0, target_hull=20))
-    assert said == ["Target shields down.", "Target hull 22 percent."]
+    said = say(engine, state, numbers(target_hull=100), numbers(target_hull=60), numbers(target_hull=22),
+               numbers(target_hull=21), numbers(target_hull=20))
+    assert said == ["Target hull 22 percent."]
     state.target = Target("Python", 3, "James Moss")
-    said = say(engine, state, numbers(target_shields=0, target_hull=30), numbers(target_shields=0, target_hull=30),
-               numbers(target_shields=0, target_hull=30), start=100.0)
-    assert said == ["Target shields down."]
+    said = say(engine, state, numbers(target_hull=20), numbers(target_hull=20), numbers(target_hull=20), start=100.0)
+    assert said == ["Target hull 20 percent."]
 
 
 def test_target_switch_between_reads_is_ignored():
@@ -213,10 +244,10 @@ def test_target_switch_between_reads_is_ignored():
 
     engine, state = AlertEngine(), fdl_state()
     state.target = Target("Python", 3, "James Moss")
-    engine.on_hud(numbers(target_shields=0), state, 0.0)
+    engine.on_hud(shields(False, target_hull=50), state, 0.0)
     state.target = Target("Viper Mk III", 3, "Someone Else")
     # One read of each target is not two reads of the same target.
-    assert engine.on_hud(numbers(target_shields=0), state, 2.0) == []
+    assert engine.on_hud(shields(False, target_hull=50), state, 2.0) == []
 
 
 def test_nothing_after_the_ship_is_lost():

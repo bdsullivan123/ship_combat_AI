@@ -79,3 +79,17 @@ def test_federal_assault_ship_fight_with_screen_reading():
         "Ship lost.",
     ]
     assert not app.state.destroyed  # the recording runs on through the rebuy and respawn
+
+
+def test_res_bounty_run_target_shields():
+    """2026-10-27, second session: five kills in a Hazardous RES, replayed with HUD readings.
+
+    The Cobra's shields failed, then came back online (blue 38%) just before the kill.
+    """
+    said, _ = run(FIXTURES / "res_bounty_run_2026-10-27.jsonl")
+    shield_calls = [s for s in said if s.startswith("Target shields")]
+    assert shield_calls == ["Target shields down.",  # Viper Mk IV
+                            "Target shields down.", "Target shields back online.",  # Cobra Mk III
+                            "Target shields down.",  # Adder
+                            "Target shields down."]  # Sidewinder
+    assert said.count("Kill confirmed. 116 thousand credits.") == 1

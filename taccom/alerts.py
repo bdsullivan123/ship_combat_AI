@@ -85,6 +85,8 @@ class AlertEngine:
         self._hud_prev_weapons = None
         self._steps_announced: dict[str, set[int]] = {}
         self._steps_target = None
+        self._tshields_confirmed: bool | None = None  # the target's shield state, as announced
+        self._tshields_last: bool | None = None  # the last conclusive read
         self._ammo_announced: dict[str, set[int]] = {}
         self._ammo_seen_max: dict[tuple, int] = {}
         self._dry_announced: set[tuple] = set()
@@ -196,11 +198,9 @@ class AlertEngine:
         else:
             if target_key != self._steps_target:
                 self._steps_target = target_key
-                self._steps_announced.pop("target_shields", None)
                 self._steps_announced.pop("target_hull", None)
-            t_shields = _both(reading.target_shields, prev.target_shields, max)
-            if t_shields is not None and self._crossed("target_shields", t_shields, (0,), rearm=10) is not None:
-                out.append(Alert("target_shields", "Target shields down.", Priority.NORMAL, now))
+                self._tshields_confirmed = self._tshields_last = None
+            out.extend(self._target_shields(reading, now))
             t_hull = _both(reading.target_hull, prev.target_hull, max)
             if t_hull is not None and self._crossed("target_hull", t_hull, TARGET_HULL_STEPS) is not None:
                 out.append(Alert("target_hull", f"Target hull {t_hull} percent.", Priority.NORMAL, now))
@@ -213,6 +213,25 @@ class AlertEngine:
                     continue  # a line was missed in one read; positions can't be matched
                 out.extend(self._ammo(kind, cur, old, state, now))
         return self._gate(out)
+
+    def _target_shields(self, reading, now: float) -> list[Alert]:
+        """Target shields down / back online, on a change confirmed by two conclusive reads.
+
+        Reads that can't tell (hologram out of view) are skipped, not counted.
+        """
+        up = reading.target_shields_up
+        if up is None:
+            return []
+        confirmed = up == self._tshields_last
+        self._tshields_last = up
+        if not confirmed or up == self._tshields_confirmed:
+            return []
+        first = self._tshields_confirmed is None
+        self._tshields_confirmed = up
+        if up and first:
+            return []  # shields up on a fresh target is the normal case; say nothing
+        text = "Target shields back online." if up else "Target shields down."
+        return [Alert("target_shields", text, Priority.NORMAL, now)]
 
     def _crossed(self, key: str, value: int, steps: tuple[int, ...], rearm: int = 5) -> int | None:
         """The lowest not-yet-announced step that value has fallen to, if any.
@@ -361,7 +380,7 @@ class AlertEngine:
             phrases += [f"{name} ammo out.", f"One {name.lower()} is dry."]
         phrases += [f"{name} empty." for name in UTILITY_NAMES.values()]
         phrases += ["Shields 50 percent.", "Shields 25 percent.", "Shields 25 percent. Four pips to systems.",
-                    "Target shields down."]
+                    "Target shields down.", "Target shields back online."]
         phrases += [f"Target hull {h} percent." for h in range(TARGET_HULL_STEPS[0] + 1)]
         phrases += ["Fuel low.", "Fighter destroyed.", "Shields back online.", "Taking fire."]
         for h in range(25, 101):

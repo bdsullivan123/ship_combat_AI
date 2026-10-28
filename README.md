@@ -86,7 +86,8 @@ The game files don't report your shield percentage, your target's health, live a
 |---|---|---|
 | Your shields at 50% / 25% | "Shields 50 percent." / "Shields 25 percent. Four pips to systems." | Normal / High |
 | Your hull below 15, 10 and 5% (past the journal's last report) | "Hull critical, 10 percent. Disengage now." | Critical |
-| Target's shields gone | "Target shields down." | Normal |
+| Target's shields fail | "Target shields down." | Normal |
+| Target's shields come back | "Target shields back online." | Normal |
 | Target's hull at 25% and 10% | "Target hull 22 percent." | Normal |
 | Heat 85% or more (before it overheats) | "Heat 88 percent." | High |
 | Ammo for a weapon type at 50 / 25 / 10 / 0% | "Multicannon ammo 25 percent." / "Multicannon ammo out." | Normal, then High from 10% |
@@ -104,6 +105,7 @@ In combat, your view shifts constantly with G-forces, impacts and looking around
 - **Numbers are matched by position.** Each percentage goes to the value expected at that spot on the hologram, and impossible values like a "190%" shield are discarded.
 - **Shields count only while the game says they're up.** While they're down, the number on the hologram is the recharge progress, not shield strength.
 - **Target calls need the same target in both reads,** and they reset when you switch targets.
+- **The target's shield state is read from colour, not digits.** While its shields are up, the hologram's rings and shield number are blue; once they fail, both turn red, and the red number is recharge progress. TACCOM counts blue pixels on the target hologram: plenty means up; none means down, but only when the hologram's hull number is readable, so "no hologram on screen" never counts as "shields down". Frames that can't tell either way are skipped.
 - **Full ammo comes from your loadout.** It's tracked per fire group, because the panel only shows the current group's weapons.
 - **It only reads when the combat HUD is showing.** That means hardpoints out, not in analysis mode, no panel or map open, not after the ship is destroyed, and only while Elite is the active window, so nothing else on your desktop is ever captured.
 

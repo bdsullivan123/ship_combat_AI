@@ -38,6 +38,10 @@ class Layout:
     regions: dict[str, tuple[tuple[int, int, int, int], float]]
     # reading field -> (region, (x, y) where that number's centre sits in the reference)
     numbers: dict[str, tuple[str, tuple[int, int]]]
+    # Around the target hologram: shield rings and the shield number are drawn
+    # in blue while the target's shields are up, and red or not at all once
+    # they're down. Counting blue pixels doesn't depend on OCR.
+    target_glow: tuple[int, int, int, int]
 
 
 LAYOUTS = {
@@ -58,6 +62,7 @@ LAYOUTS = {
             "target_hull": ("target_ship", (734, 904)),
             "heat": ("heat", (885, 752)),
         },
+        target_glow=(580, 790, 830, 950),
     ),
 }
 
@@ -96,6 +101,7 @@ class HudReading:
     hull: int | None = None
     target_shields: int | None = None
     target_hull: int | None = None
+    target_shields_up: bool | None = None  # None: couldn't tell from this frame
     target_lines: list[str] = field(default_factory=list)
     target_distance: str | None = None
     weapons_read: bool = False  # False: the weapon panel wasn't part of this read
@@ -197,6 +203,8 @@ class HudReader:
         if "target_panel" in found:
             self._parse_target_panel(found["target_panel"], reading)
         self._parse_numbers(found, reading)
+        if "target_ship" in found:
+            reading.target_shields_up = self._target_shields_up(aligned, reading)
         return reading
 
     def _lines(self, crop, ox: int, oy: int, scale: float) -> list[TextLine]:
@@ -254,6 +262,17 @@ class HudReader:
             taken_lines.add(line_id)
             setattr(reading, fld, value)
 
+    def _target_shields_up(self, aligned, reading: HudReading) -> bool | None:
+        x1, y1, x2, y2 = self.layout.target_glow
+        blue = _blue_pixels(aligned[y1:y2, x1:x2])
+        if blue >= SHIELD_GLOW_UP:
+            return True
+        # No blue could also mean there's no hologram on screen at all, so
+        # "down" needs the hologram's hull number to have been readable.
+        if blue <= SHIELD_GLOW_DOWN and (reading.target_hull is not None or reading.target_shields == 0):
+            return False
+        return None
+
     @staticmethod
     def _parse_target_panel(lines: list[TextLine], reading: HudReading) -> None:
         for ln in lines:
@@ -261,6 +280,18 @@ class HudReader:
                 reading.target_distance = ln.text
             else:
                 reading.target_lines.append(ln.text)
+
+
+SHIELD_GLOW_UP = 40  # blue pixels: shields up (measured 47 to 3,000 on real targets)
+SHIELD_GLOW_DOWN = 5  # with the hologram in view, downed shields measured exactly 0
+
+
+def _blue_pixels(crop) -> int:
+    import cv2
+
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    return int(((h >= 80) & (h <= 112) & (s >= 90) & (v >= 140)).sum())
 
 
 def percent(text: str) -> int | None:
