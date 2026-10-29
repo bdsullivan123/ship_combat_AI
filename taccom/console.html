@@ -109,9 +109,6 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 16px; mi
 .body table { border-collapse: collapse; margin: 0 0 12px; font-size: 14px; display: block; overflow-x: auto; }
 .body th, .body td { border: 1px solid var(--line-soft); padding: 5px 10px; text-align: left; vertical-align: top; }
 .body th { color: var(--amber); font-weight: 600; background: var(--panel); letter-spacing: 0.04em; }
-.tools { margin: 0 0 8px 16px; display: flex; flex-direction: column; gap: 2px; }
-.tool { font: 12px var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tool b { color: var(--cyan); font-weight: 400; letter-spacing: 0.1em; margin-right: 8px; }
 .cursor { display: inline-block; width: 9px; height: 1.05em; background: var(--amber); vertical-align: text-bottom; margin-left: 2px; animation: blink 0.9s steps(2) infinite; box-shadow: 0 0 8px var(--amber); }
 
 /* telemetry */
@@ -214,7 +211,7 @@ textarea::placeholder { color: #6d5c4b; }
   <footer>
     <div class="frame prompt">
       <span class="caret">CMDR&nbsp;▸</span>
-      <textarea id="input" rows="1" placeholder="Ask the ship computer…  (Enter to send, Shift+Enter for a new line)" aria-label="Message"></textarea>
+      <textarea id="input" rows="1" placeholder="Ask the ship computer…" aria-label="Message"></textarea>
       <button class="send" id="send">TRANSMIT</button>
     </div>
     <div class="controls">
@@ -294,23 +291,16 @@ function showEmpty() {
     </div></div>`;
   log.querySelectorAll(".hints button").forEach((b) => b.onclick = () => { input.value = b.textContent; send(); });
 }
-function addMsg(role, text, time, tools) {
+// The computer's tool use (journal reads, lookups) stays behind the scenes; only replies are shown.
+function addMsg(role, text, time) {
   log.querySelector(".empty")?.remove();
   const el = document.createElement("div");
   el.className = "msg " + (role === "user" ? "user" : "ai");
-  el.innerHTML = `<div class="who">${role === "user" ? "CMDR" : "TACCOM"}<time>${stamp(time)}</time></div><div class="tools"></div><div class="body"></div>`;
+  el.innerHTML = `<div class="who">${role === "user" ? "CMDR" : "TACCOM"}<time>${stamp(time)}</time></div><div class="body"></div>`;
   const body = el.querySelector(".body");
   if (role === "user") body.textContent = text; else body.innerHTML = md(text || "");
-  (tools || []).forEach((t) => addTool(el, t));
   log.appendChild(el);
   return el;
-}
-function addTool(el, t) {
-  const d = document.createElement("div");
-  d.className = "tool";
-  d.innerHTML = `<b>◇ ${esc(t.name.toUpperCase())}</b>${esc(t.detail || "")}`;
-  d.title = t.detail || "";
-  el.querySelector(".tools").appendChild(d);
 }
 
 async function loadHistory() {
@@ -318,7 +308,7 @@ async function loadHistory() {
     const h = await (await fetch("/api/history")).json();
     log.innerHTML = "";
     if (!h.messages.length) showEmpty();
-    h.messages.forEach((m) => addMsg(m.role, m.text, m.time, m.tools));
+    h.messages.forEach((m) => addMsg(m.role, m.text, m.time));
     scrollDown(true);
   } catch { showEmpty(); }
 }
@@ -359,7 +349,6 @@ async function send() {
         if (!line.trim()) continue;
         const ev = JSON.parse(line);
         if (ev.t === "text") { acc += ev.d; if (!queued) { queued = true; requestAnimationFrame(paint); } }
-        else if (ev.t === "tool") { addTool(el, ev); scrollDown(); }
         else if (ev.t === "error") { el.classList.add("err"); acc = ev.d; }
       }
     }
