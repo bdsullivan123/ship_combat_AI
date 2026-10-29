@@ -28,6 +28,8 @@ from .state import ship_display_name
 ROOT = Path(__file__).resolve().parent.parent
 PAGE = Path(__file__).resolve().parent / "console.html"
 STATE_FILE = ROOT / "sessions" / "console.json"
+# Optional handoff notes (e.g. from a conversation in the editor), sent along with every message.
+BRIEFING = ROOT / "sessions" / "briefing" / "README.md"
 DEFAULT_PORT = 7700
 HISTORY_LIMIT = 200  # messages kept for redrawing the page
 # With its own window, the console shuts down once the window has been closed this long.
@@ -275,6 +277,10 @@ class Console:
             self.state["session_id"] = str(uuid.uuid4())
         sid = self.state["session_id"]
         persona = PERSONA.format(journal_dir=self.telemetry.journal_dir, telemetry=self.telemetry.summary())
+        try:
+            persona += f"\n\nBriefing ({BRIEFING}):\n\n" + BRIEFING.read_text(encoding="utf-8")
+        except OSError:
+            pass
         cmd = [*self.claude, "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                "--permission-mode", "auto", "--permission-prompts", "none", "--append-system-prompt", persona]
         cmd += ["--resume", sid] if self.state["started"] else ["--session-id", sid, "--name", "TACCOM console"]

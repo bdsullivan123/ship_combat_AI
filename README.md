@@ -128,6 +128,7 @@ What you type goes to **Claude Code itself**, not a separate chatbot. Each messa
 - **Voice:** the **VOICE** button reads replies aloud in the TACCOM voice. Replies aren't added to the phrase cache.
 - **Permissions:** it runs in Claude Code's auto permission mode with no prompts. Anything that would need your approval is declined, and Claude says so.
 - **Privacy:** the server listens on `127.0.0.1` only and rejects requests from other web pages, because anyone who can reach it can run Claude Code on this PC.
+- **Briefing:** if `sessions/briefing/README.md` exists, it goes along with every message as background, which is handy for handing over a conversation from the editor. It stays out of git with the rest of `sessions/`.
 - **History:** the conversation is kept in `sessions/console.json`, and in Claude Code's own history as "TACCOM console". **NEW LINK** starts a fresh one.
 
 Options: `--port` (default 7700), `--model`, `--voice`, `--speed`, `--no-window`. It opens as an app window in Edge or Chrome when it finds one.
