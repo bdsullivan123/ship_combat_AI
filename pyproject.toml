@@ -30,7 +30,7 @@ build-backend = "setuptools.build_meta"
 packages = ["taccom"]
 
 [tool.setuptools.package-data]
-taccom = ["layouts/*.jpg"]
+taccom = ["layouts/*.jpg", "console.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

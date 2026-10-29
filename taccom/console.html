@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TACCOM Console</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 29,9.5 29,22.5 16,30 3,22.5 3,9.5' fill='none' stroke='%23ff8a1f' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23ff8a1f'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #05070a;
+  --bg2: #0b0f14;
+  --amber: #ff8a1f;
+  --amber-hi: #ffb062;
+  --amber-dim: #9a5418;
+  --line: rgba(255, 138, 31, 0.32);
+  --line-soft: rgba(255, 138, 31, 0.14);
+  --panel: rgba(255, 138, 31, 0.045);
+  --text: #f1e4d3;
+  --muted: #a8927a;
+  --cyan: #45cdf0;
+  --cyan-dim: rgba(69, 205, 240, 0.18);
+  --red: #ff5340;
+  --green: #7fe08a;
+  --ui: "Bahnschrift", "DIN Alternate", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255, 138, 31, 0.10), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 100% 100%, rgba(69, 205, 240, 0.06), transparent 70%),
+    linear-gradient(var(--line-soft) 1px, transparent 1px) 0 0 / 100% 48px,
+    linear-gradient(90deg, var(--line-soft) 1px, transparent 1px) 0 0 / 48px 100%,
+    var(--bg);
+  color: var(--text);
+  font: 16px/1.55 var(--ui);
+  overflow: hidden;
+}
+/* CRT scanlines over everything, never in the way of the mouse. */
+body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 10;
+  background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,0.18) 2px 3px);
+  mix-blend-mode: multiply;
+}
+.app { height: 100%; display: grid; grid-template-rows: auto 1fr auto; max-width: 1500px; margin: 0 auto; padding: 14px 18px 16px; gap: 14px; }
+
+/* ---------- header ---------- */
+header { display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--line); padding-bottom: 12px; position: relative; }
+header::after { content: ""; position: absolute; left: 0; bottom: -1px; width: 180px; height: 2px; background: var(--amber); box-shadow: 0 0 12px var(--amber); }
+.emblem { width: 46px; height: 46px; flex: none; }
+.emblem .ring { transform-origin: 50% 50%; animation: spin 14s linear infinite; }
+.busy .emblem .ring { animation-duration: 2.2s; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.title { display: flex; flex-direction: column; line-height: 1.1; }
+.title h1 { margin: 0; font-size: 26px; letter-spacing: 0.32em; color: var(--amber); font-weight: 700; text-shadow: 0 0 18px rgba(255,138,31,0.45); }
+.title span { font-size: 11px; letter-spacing: 0.34em; color: var(--muted); margin-top: 4px; }
+.status { margin-left: auto; display: flex; align-items: center; gap: 18px; font-family: var(--mono); font-size: 13px; letter-spacing: 0.12em; }
+.pill { display: flex; align-items: center; gap: 8px; padding: 5px 12px; border: 1px solid var(--line); clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%); background: var(--panel); color: var(--green); }
+.pill i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+.busy .pill { color: var(--amber); }
+.busy .pill i { animation: blink 0.8s steps(2) infinite; }
+.pill.down { color: var(--red); }
+@keyframes blink { 50% { opacity: 0.15; } }
+.clock { color: var(--muted); }
+
+/* ---------- main ---------- */
+main { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 16px; min-height: 0; }
+.frame { position: relative; border: 1px solid var(--line); background: linear-gradient(180deg, rgba(11,15,20,0.92), rgba(5,7,10,0.92)); min-height: 0; }
+.frame::before, .frame::after { content: ""; position: absolute; width: 14px; height: 14px; border: 2px solid var(--amber); pointer-events: none; }
+.frame::before { top: -2px; left: -2px; border-right: 0; border-bottom: 0; }
+.frame::after { bottom: -2px; right: -2px; border-left: 0; border-top: 0; }
+.label { font-size: 11px; letter-spacing: 0.3em; color: var(--amber); text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+.label::before { content: ""; width: 7px; height: 7px; background: var(--amber); transform: rotate(45deg); }
+
+/* comms */
+.comms { display: flex; flex-direction: column; }
+.comms > .label { padding: 12px 18px 10px; border-bottom: 1px solid var(--line-soft); }
+.log { flex: 1; overflow-y: auto; padding: 18px 22px 26px; scroll-behavior: smooth; }
+.log::-webkit-scrollbar { width: 8px; }
+.log::-webkit-scrollbar-thumb { background: var(--amber-dim); }
+.empty { color: var(--muted); max-width: 560px; margin: 8vh auto 0; text-align: center; }
+.empty b { color: var(--amber); letter-spacing: 0.2em; font-weight: 600; display: block; margin-bottom: 8px; }
+.empty .hints { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
+.empty button { font: 13px var(--ui); color: var(--text); background: var(--panel); border: 1px solid var(--line); padding: 7px 12px; cursor: pointer; }
+.empty button:hover { border-color: var(--amber); color: var(--amber-hi); }
+
+.msg { margin: 0 0 20px; animation: rise 0.25s ease-out; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.who { font: 600 11px var(--mono); letter-spacing: 0.24em; margin-bottom: 5px; display: flex; gap: 10px; align-items: baseline; }
+.who time { color: var(--muted); font-weight: 400; letter-spacing: 0.08em; }
+.msg.user .who { color: var(--cyan); }
+.msg.user .body { color: #d8f1f8; border-left: 2px solid var(--cyan); padding: 2px 0 2px 14px; white-space: pre-wrap; }
+.msg.ai .who { color: var(--amber); }
+.msg.ai .body { border-left: 2px solid var(--amber-dim); padding: 2px 0 2px 14px; }
+.msg.err .body { color: var(--red); border-color: var(--red); }
+.body > :first-child { margin-top: 0; }
+.body > :last-child { margin-bottom: 0; }
+.body p { margin: 0 0 10px; }
+.body ul, .body ol { margin: 0 0 10px; padding-left: 22px; }
+.body li { margin: 3px 0; }
+.body li::marker { color: var(--amber); }
+.body strong { color: var(--amber-hi); font-weight: 600; }
+.body h3, .body h4 { margin: 14px 0 6px; font-size: 14px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber); }
+.body a { color: var(--cyan); }
+.body code { font: 0.9em var(--mono); background: rgba(255,138,31,0.08); border: 1px solid var(--line-soft); padding: 0 5px; }
+.body pre { font: 13px/1.5 var(--mono); background: #020304; border: 1px solid var(--line-soft); padding: 10px 12px; overflow-x: auto; margin: 0 0 10px; }
+.body pre code { background: none; border: 0; padding: 0; }
+.body table { border-collapse: collapse; margin: 0 0 12px; font-size: 14px; display: block; overflow-x: auto; }
+.body th, .body td { border: 1px solid var(--line-soft); padding: 5px 10px; text-align: left; vertical-align: top; }
+.body th { color: var(--amber); font-weight: 600; background: var(--panel); letter-spacing: 0.04em; }
+.tools { margin: 0 0 8px 16px; display: flex; flex-direction: column; gap: 2px; }
+.tool { font: 12px var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tool b { color: var(--cyan); font-weight: 400; letter-spacing: 0.1em; margin-right: 8px; }
+.cursor { display: inline-block; width: 9px; height: 1.05em; background: var(--amber); vertical-align: text-bottom; margin-left: 2px; animation: blink 0.9s steps(2) infinite; box-shadow: 0 0 8px var(--amber); }
+
+/* telemetry */
+aside { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; min-height: 0; }
+.card { padding: 12px 14px 13px; }
+.card .label { margin-bottom: 10px; }
+.big { font-size: 19px; font-weight: 600; color: var(--text); line-height: 1.25; word-break: break-word; }
+.sub { color: var(--muted); font-size: 13px; margin-top: 3px; word-break: break-word; }
+.row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; margin-top: 7px; }
+.row span:first-child { color: var(--muted); letter-spacing: 0.08em; }
+.row span:last-child { font-family: var(--mono); text-align: right; word-break: break-word; }
+.bar { height: 8px; margin-top: 8px; background: rgba(255,138,31,0.1); border: 1px solid var(--line-soft); position: relative; overflow: hidden; }
+.bar > i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--amber-dim), var(--amber)); box-shadow: 0 0 10px var(--amber); transition: width 0.6s; }
+.bar.low > i { background: linear-gradient(90deg, #7a1d12, var(--red)); box-shadow: 0 0 10px var(--red); }
+.bar.hull > i { background: linear-gradient(90deg, #1b5d70, var(--cyan)); box-shadow: 0 0 10px var(--cyan); }
+.badge { display: none; margin-top: 9px; font: 600 11px var(--mono); letter-spacing: 0.2em; color: #021016; background: var(--cyan); padding: 3px 8px; box-shadow: 0 0 14px var(--cyan); animation: blink 1.4s steps(2) infinite; }
+.badge.on { display: inline-block; }
+
+/* ---------- input ---------- */
+footer { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 16px; }
+.prompt { display: flex; align-items: flex-end; gap: 12px; padding: 10px 12px 10px 16px; }
+.prompt .caret { color: var(--cyan); font: 600 15px var(--mono); padding-bottom: 7px; letter-spacing: 0.1em; }
+textarea { flex: 1; resize: none; background: transparent; border: 0; outline: 0; color: var(--text); font: 16px/1.5 var(--ui); max-height: 180px; padding: 5px 0; }
+textarea::placeholder { color: #6d5c4b; }
+.send { font: 600 13px var(--ui); letter-spacing: 0.2em; color: #140800; background: var(--amber); border: 0; padding: 9px 18px; cursor: pointer; clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%); box-shadow: 0 0 16px rgba(255,138,31,0.5); }
+.send:hover { background: var(--amber-hi); }
+.send:disabled { opacity: 0.4; cursor: default; }
+.controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.controls button { font: 600 11px var(--ui); letter-spacing: 0.2em; color: var(--amber); background: var(--panel); border: 1px solid var(--line); cursor: pointer; padding: 0 6px; min-height: 48px; }
+.controls button:hover { border-color: var(--amber); color: var(--amber-hi); }
+.controls button.on { color: #021016; background: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 14px rgba(69,205,240,0.45); }
+.controls button:disabled { opacity: 0.35; cursor: default; }
+.note { grid-column: 1 / -1; font-size: 12px; color: var(--muted); min-height: 1em; }
+.note.err { color: var(--red); }
+
+@media (max-width: 900px) {
+  body { overflow: auto; }
+  .app { height: auto; min-height: 100%; padding: 10px 16px 14px; }
+  main, footer { grid-template-columns: 1fr; }
+  aside { order: -1; flex-direction: row; overflow-x: auto; }
+  aside .card { min-width: 220px; }
+  .log { max-height: 60vh; }
+  .status .clock { display: none; }
+  .title h1 { font-size: 20px; }
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header>
+    <svg class="emblem" viewBox="0 0 48 48" aria-hidden="true">
+      <polygon points="24,3 42,13.5 42,34.5 24,45 6,34.5 6,13.5" fill="rgba(255,138,31,0.08)" stroke="#ff8a1f" stroke-width="1.5"/>
+      <g class="ring"><circle cx="24" cy="24" r="12" fill="none" stroke="#ff8a1f" stroke-width="1.5" stroke-dasharray="14 5"/></g>
+      <circle cx="24" cy="24" r="4" fill="#ff8a1f"/>
+    </svg>
+    <div class="title"><h1>TACCOM</h1><span>SHIP COMPUTER · CLAUDE LINK</span></div>
+    <div class="status">
+      <div class="pill" id="pill"><i></i><span id="pillText">ONLINE</span></div>
+      <div class="clock" id="clock"></div>
+    </div>
+  </header>
+
+  <main>
+    <section class="frame comms">
+      <div class="label">Comms</div>
+      <div class="log" id="log" aria-live="polite"></div>
+    </section>
+    <aside>
+      <div class="frame card">
+        <div class="label">Navigation</div>
+        <div class="big" id="tSystem">—</div>
+        <div class="sub" id="tWhere"></div>
+        <div class="row"><span>MODE</span><span id="tMode">—</span></div>
+      </div>
+      <div class="frame card">
+        <div class="label">Route</div>
+        <div class="big" id="tDest">No route plotted</div>
+        <div class="row"><span>JUMPS LEFT</span><span id="tJumps">—</span></div>
+        <div class="row"><span>NEXT</span><span id="tNext">—</span></div>
+      </div>
+      <div class="frame card">
+        <div class="label">Frame Shift Drive</div>
+        <div class="row" style="margin-top:0"><span>FUEL</span><span id="tFuel">—</span></div>
+        <div class="bar" id="fuelBar"><i style="width:0"></i></div>
+        <div class="row"><span>MAX JUMP</span><span id="tRange">—</span></div>
+        <span class="badge" id="tBoost">FSD SUPERCHARGED</span>
+      </div>
+      <div class="frame card">
+        <div class="label">Ship</div>
+        <div class="big" id="tShip">—</div>
+        <div class="sub" id="tShipName"></div>
+        <div class="row"><span>HULL</span><span id="tHull">—</span></div>
+        <div class="bar hull" id="hullBar"><i style="width:0"></i></div>
+        <div class="row"><span>CREDITS</span><span id="tCredits">—</span></div>
+        <div class="row"><span>LEGAL</span><span id="tLegal">—</span></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <div class="frame prompt">
+      <span class="caret">CMDR&nbsp;▸</span>
+      <textarea id="input" rows="1" placeholder="Ask the ship computer…  (Enter to send, Shift+Enter for a new line)" aria-label="Message"></textarea>
+      <button class="send" id="send">TRANSMIT</button>
+    </div>
+    <div class="controls">
+      <button id="voiceBtn" title="Read replies aloud">VOICE</button>
+      <button id="stopBtn" title="Stop the current reply and the voice">ABORT</button>
+      <button id="newBtn" title="Start a fresh conversation">NEW LINK</button>
+      <div class="note" id="note"></div>
+    </div>
+  </footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const log = $("log"), input = $("input"), app = $("app");
+let busy = false, voiceOn = false;
+
+/* ---------- markdown (escaped first, so replies can never inject HTML) ---------- */
+function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function inline(s) {
+  const codes = [];
+  s = s.replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+  s = esc(s)
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noreferrer">$2</a>')
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*\w])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${esc(codes[+i])}</code>`);
+}
+function md(src) {
+  const lines = src.replace(/\r/g, "").split("\n");
+  let out = "", i = 0;
+  const isTable = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^```/.test(l)) {
+      const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+      i++; out += `<pre><code>${esc(buf.join("\n"))}</code></pre>`; continue;
+    }
+    if (isTable(l) && i + 1 < lines.length && /^\s*\|?[\s:-]+\|[\s|:-]*$/.test(lines[i + 1])) {
+      const head = cells(l); i += 2; const rows = [];
+      while (i < lines.length && isTable(lines[i])) rows.push(cells(lines[i++]));
+      out += "<table><thead><tr>" + head.map((c) => `<th>${inline(c)}</th>`).join("") + "</tr></thead><tbody>"
+        + rows.map((r) => "<tr>" + r.map((c) => `<td>${inline(c)}</td>`).join("") + "</tr>").join("") + "</tbody></table>";
+      continue;
+    }
+    const h = l.match(/^(#{1,4})\s+(.*)/);
+    if (h) { out += `<h4>${inline(h[2])}</h4>`; i++; continue; }
+    if (/^\s*([-*•]|\d+\.)\s+/.test(l)) {
+      const ordered = /^\s*\d+\./.test(l); const items = [];
+      while (i < lines.length && /^\s*([-*•]|\d+\.)\s+/.test(lines[i])) {
+        let item = lines[i++].replace(/^\s*([-*•]|\d+\.)\s+/, "");
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !/^\s*([-*•]|\d+\.)\s+/.test(lines[i])) item += " " + lines[i++].trim();
+        items.push(`<li>${inline(item)}</li>`);
+      }
+      out += ordered ? `<ol>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`; continue;
+    }
+    if (!l.trim()) { i++; continue; }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^```|^#{1,4}\s|^\s*([-*•]|\d+\.)\s+/.test(lines[i]) && !isTable(lines[i])) para.push(lines[i++]);
+    out += `<p>${para.map(inline).join("<br>")}</p>`;
+  }
+  return out;
+}
+
+/* ---------- comms log ---------- */
+const stamp = (t) => new Date((t || Date.now() / 1000) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function nearBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 120; }
+function scrollDown(force) { if (force || nearBottom()) log.scrollTop = log.scrollHeight; }
+
+function showEmpty() {
+  log.innerHTML = `<div class="empty"><b>LINK ESTABLISHED</b>
+    This is Claude Code, the same assistant as in your editor, with the same tools and memory, plus live telemetry from your ship.
+    <div class="hints">
+      <button>Status report</button><button>How far to my destination?</button><button>Where's the nearest Vista Genomics?</button>
+    </div></div>`;
+  log.querySelectorAll(".hints button").forEach((b) => b.onclick = () => { input.value = b.textContent; send(); });
+}
+function addMsg(role, text, time, tools) {
+  log.querySelector(".empty")?.remove();
+  const el = document.createElement("div");
+  el.className = "msg " + (role === "user" ? "user" : "ai");
+  el.innerHTML = `<div class="who">${role === "user" ? "CMDR" : "TACCOM"}<time>${stamp(time)}</time></div><div class="tools"></div><div class="body"></div>`;
+  const body = el.querySelector(".body");
+  if (role === "user") body.textContent = text; else body.innerHTML = md(text || "");
+  (tools || []).forEach((t) => addTool(el, t));
+  log.appendChild(el);
+  return el;
+}
+function addTool(el, t) {
+  const d = document.createElement("div");
+  d.className = "tool";
+  d.innerHTML = `<b>◇ ${esc(t.name.toUpperCase())}</b>${esc(t.detail || "")}`;
+  d.title = t.detail || "";
+  el.querySelector(".tools").appendChild(d);
+}
+
+async function loadHistory() {
+  try {
+    const h = await (await fetch("/api/history")).json();
+    log.innerHTML = "";
+    if (!h.messages.length) showEmpty();
+    h.messages.forEach((m) => addMsg(m.role, m.text, m.time, m.tools));
+    scrollDown(true);
+  } catch { showEmpty(); }
+}
+
+function setBusy(on) {
+  busy = on;
+  app.classList.toggle("busy", on);
+  $("pillText").textContent = on ? "PROCESSING" : "ONLINE";
+  $("send").disabled = on;
+  $("newBtn").disabled = on;
+}
+function note(text, err) { const n = $("note"); n.textContent = text || ""; n.classList.toggle("err", !!err); }
+
+async function send() {
+  const text = input.value.trim();
+  if (!text || busy) return;
+  input.value = ""; grow();
+  addMsg("user", text);
+  const el = addMsg("ai", "");
+  const body = el.querySelector(".body");
+  let acc = "", queued = false;
+  const paint = () => { queued = false; body.innerHTML = md(acc) + '<span class="cursor"></span>'; scrollDown(); };
+  body.innerHTML = '<span class="cursor"></span>';
+  scrollDown(true);
+  setBusy(true); note("");
+  try {
+    const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    if (!res.ok) throw new Error(res.status === 409 ? "Still working on the last message." : `Console error ${res.status}`);
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        const ev = JSON.parse(line);
+        if (ev.t === "text") { acc += ev.d; if (!queued) { queued = true; requestAnimationFrame(paint); } }
+        else if (ev.t === "tool") { addTool(el, ev); scrollDown(); }
+        else if (ev.t === "error") { el.classList.add("err"); acc = ev.d; }
+      }
+    }
+  } catch (e) {
+    el.classList.add("err"); acc = acc || ("Link failure: " + e.message);
+    $("pill").classList.add("down");
+  }
+  body.innerHTML = md(acc || "*(no reply)*");
+  setBusy(false); scrollDown();
+  input.focus();
+}
+
+/* ---------- telemetry ---------- */
+const fmt = (n, d = 1) => n == null ? "—" : Number(n).toFixed(d);
+function set(id, v) { $(id).textContent = v ?? "—"; }
+async function telemetry() {
+  try {
+    const t = await (await fetch("/api/telemetry")).json();
+    $("pill").classList.remove("down");
+    set("tSystem", t.system || "Unknown");
+    $("tWhere").textContent = t.station ? "Docked · " + t.station : (t.body ? "Near " + t.body : "");
+    set("tMode", t.mode ? t.mode.toUpperCase() : "—");
+    set("tDest", t.destination || "No route plotted");
+    set("tJumps", t.route_jumps ?? "—");
+    set("tNext", t.next_jump || "—");
+    if (t.fuel != null && t.fuel_capacity) {
+      const pct = Math.max(0, Math.min(100, (t.fuel / t.fuel_capacity) * 100));
+      set("tFuel", `${fmt(t.fuel)} / ${fmt(t.fuel_capacity, 0)} t`);
+      $("fuelBar").firstElementChild.style.width = pct + "%";
+      $("fuelBar").classList.toggle("low", pct < 25);
+    }
+    set("tRange", t.jump_range ? `${fmt(t.jump_range)} ly` + (t.supercharged ? `  →  ${fmt(t.jump_range * 4)} ly` : "") : "—");
+    $("tBoost").classList.toggle("on", !!t.supercharged);
+    set("tShip", t.ship || "—");
+    $("tShipName").textContent = [t.ship_name, t.commander && "CMDR " + t.commander].filter(Boolean).join(" · ");
+    if (t.hull != null) { set("tHull", fmt(t.hull, 0) + "%"); $("hullBar").firstElementChild.style.width = t.hull + "%"; }
+    set("tCredits", t.credits != null ? Number(t.credits).toLocaleString() + " CR" : "—");
+    set("tLegal", t.legal || "—");
+    voiceOn = !!t.voice; $("voiceBtn").classList.toggle("on", voiceOn);
+    if (t.voice_error) note("Voice unavailable: " + t.voice_error, true);
+  } catch { $("pill").classList.add("down"); $("pillText").textContent = "LINK LOST"; }
+}
+
+/* ---------- controls ---------- */
+function grow() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 180) + "px"; }
+input.addEventListener("input", grow);
+input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+$("send").onclick = send;
+$("stopBtn").onclick = () => fetch("/api/stop", { method: "POST" });
+$("voiceBtn").onclick = async () => {
+  note(voiceOn ? "" : "Voice on. The first reply takes a few seconds while the voice loads.");
+  const r = await (await fetch("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: !voiceOn }) })).json();
+  voiceOn = r.voice; $("voiceBtn").classList.toggle("on", voiceOn);
+};
+$("newBtn").onclick = async () => {
+  if (!confirm("Start a new conversation? The ship computer won't remember this one (it stays in Claude Code's history).")) return;
+  await fetch("/api/new", { method: "POST" });
+  loadHistory();
+};
+setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }, 1000);
+
+loadHistory();
+telemetry();
+setInterval(telemetry, 2000);
+input.focus();
+</script>
+</body>
+</html>

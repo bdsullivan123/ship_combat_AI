@@ -4,7 +4,7 @@ An AI tactical officer for **Elite Dangerous**. TACCOM watches your ship's state
 
 It is an **advisor, not an autopilot**. It never sends input to the game.
 
-> **Status:** Stage 1 (alerts from game files) works, with a natural neural voice. Stage 2 (screen reading) reads shields, hull, target health, heat and ammo on the Fer-de-Lance, through head movement; radar and other ships are next. Stage 3 not started.
+> **Status:** Stage 1 (alerts from game files) works, with a natural neural voice. Stage 2 (screen reading) reads shields, hull, target health, heat and ammo on the Fer-de-Lance, through head movement; radar and other ships are next. Stage 3 has begun: a ship's-computer console for talking to Claude Code.
 
 ---
 
@@ -38,6 +38,8 @@ Start it before or during a game session. It reads the current journal silently 
 | `python -m taccom replay <file>` | Run a recorded session or a game journal through TACCOM instantly and print what it would have said |
 | `python -m taccom replay <file> --since 2026-10-26T23:38:00Z --until 2026-10-26T23:46:00Z` | Replay only one fight. Earlier events still build ship state, silently |
 | `python -m taccom replay <file> --realtime 1` | Replay at real speed, out loud |
+| `python -m taccom console` | Open the ship's-computer console and talk to Claude Code (see below) |
+| `python -m taccom console --speak` | The same, reading replies aloud from the start |
 
 With no file, `replay` uses your newest game journal. Run the tests with `.venv\Scripts\python -m pytest`.
 
@@ -115,6 +117,20 @@ The reader is calibrated for the **Fer-de-Lance at 1920×1080 with the default o
 
 - **Radar contacts**, for "enemy behind you" warnings.
 - **Other ships' cockpits.** Fly one with `python -m taccom --capture` to collect frames for its layout. The capture saves a screenshot every 2 seconds in combat, plus one at every hull hit, shield change and target scan. Each comes with a JSON file of what the game files said at that instant, which serves as the answer key.
+
+## The console (Stage 3, first step)
+
+`python -m taccom console` opens a ship's-computer window: a comms log on the left, live telemetry on the right (system, route, fuel, jump range and FSD supercharge, ship, hull, credits), and a prompt along the bottom.
+
+What you type goes to **Claude Code itself**, not a separate chatbot. Each message runs Claude Code headless (`claude -p`) in this repository and resumes one console conversation, so it has the same tools, memory and judgment as the editor. It can read your journals, look things up on Spansh or EDSM, and work on TACCOM's code. Every message also carries the current telemetry, so "how far to my destination?" just works.
+
+- **Login:** it uses your existing Claude Code login and plan; no API key. It finds Claude Code on `PATH` or inside the VS Code extension; set `TACCOM_CLAUDE` to point elsewhere.
+- **Voice:** the **VOICE** button reads replies aloud in the TACCOM voice. Replies aren't added to the phrase cache.
+- **Permissions:** it runs in Claude Code's auto permission mode with no prompts. Anything that would need your approval is declined, and Claude says so.
+- **Privacy:** the server listens on `127.0.0.1` only and rejects requests from other web pages, because anyone who can reach it can run Claude Code on this PC.
+- **History:** the conversation is kept in `sessions/console.json`, and in Claude Code's own history as "TACCOM console". **NEW LINK** starts a fresh one.
+
+Options: `--port` (default 7700), `--model`, `--voice`, `--speed`, `--no-window`. It opens as an app window in Edge or Chrome when it finds one.
 
 ---
 
@@ -223,9 +239,10 @@ Urgent warnings run locally and use fixed rules, so they never wait on a network
 - [ ] Layouts for other ships
 - [ ] Experimental: radar contacts and "enemy behind you" warnings
 
-### Stage 3 — Conversational tactical officer
+### Stage 3 — Conversational tactical officer (started)
+- [x] Ship's-computer console, connected to Claude Code, with live telemetry and spoken replies
+- [x] Feed the current ship state into an AI model for tactical answers
 - [ ] Push-to-talk voice questions
-- [ ] Feed the current ship state into an AI model for tactical answers
 - [ ] Advice such as pip management, weapon choice, and when to disengage
 - [ ] Confidence reporting: say "I can't confirm that" rather than guess
 
@@ -244,6 +261,7 @@ Urgent warnings run locally and use fixed rules, so they never wait on a network
 | `taccom/hud.py` | Cockpit alignment, HUD layouts, the OCR reader, and the background HUD watcher |
 | `taccom/layouts/` | Reference frame for each calibrated cockpit |
 | `taccom/app.py` | Wiring, live loop, session recording and replay |
+| `taccom/console.py`, `taccom/console.html` | The ship's-computer console: local server, Claude Code link, telemetry, and the window |
 | `taccom/__main__.py` | Command line |
 
 ---

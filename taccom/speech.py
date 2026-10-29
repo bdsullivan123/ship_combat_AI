@@ -138,15 +138,19 @@ class KokoroBackend:
         self.cache = VoiceCache(MODELS_DIR / "voice_cache" / f"{voice}_{speed:g}")
         self._prewarm = [p for p in (prewarm or []) if not self.cache.has(p)]
 
-    def render(self, text: str):
-        audio = self.cache.get(text)
+    def render(self, text: str, cache: bool = True):
+        # One-off lines (console replies) skip the cache so it only holds repeatable alerts.
+        audio = self.cache.get(text) if cache else None
         if audio is None:
             audio, _ = self._kokoro.create(text, voice=self.voice, speed=self.speed, lang=self.lang)
-            self.cache.put(text, audio)
+            if cache:
+                self.cache.put(text, audio)
         return audio
 
     def start(self, text: str) -> None:
-        audio = self.render(text)
+        self.play(self.render(text))
+
+    def play(self, audio) -> None:
         self._sd.stop()
         self._sd.play(audio, VoiceCache.SAMPLE_RATE)
 

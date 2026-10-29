@@ -1,4 +1,4 @@
-"""Command line: python -m taccom [run|replay|voices|samples|hud|setup]"""
+"""Command line: python -m taccom [run|replay|console|voices|samples|hud|setup]"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from .speech import DEFAULT_KOKORO_VOICE, list_voices, make_speaker
 ROOT = Path(__file__).resolve().parent.parent
 SESSIONS_DIR = ROOT / "sessions"
 SAMPLES_DIR = ROOT / "voice_samples"
-COMMANDS = ("run", "replay", "voices", "samples", "hud", "setup")
+COMMANDS = ("run", "replay", "console", "voices", "samples", "hud", "setup")
 MODEL_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
 
 SAMPLE_LINE = ("Commander, wanted Imperial Clipper, Dangerous pilot. Shields down. Four pips to systems. "
@@ -61,6 +61,15 @@ def main(argv: list[str] | None = None) -> int:
                      help="play back at X times real speed, speaking aloud (default: instantly, print only)")
     voice_options(rep, "kokoro")
 
+    con = sub.add_parser("console", help="open the ship's-computer console and talk to Claude Code")
+    con.add_argument("--port", type=int, default=7700)
+    con.add_argument("--speak", action="store_true", help="read replies aloud from the start (toggle in the window)")
+    con.add_argument("--voice", help=f"voice for replies (default {DEFAULT_KOKORO_VOICE})")
+    con.add_argument("--speed", type=float, default=1.1, help="voice speed (default 1.1)")
+    con.add_argument("--model", help="Claude model for the console (default: Claude Code's)")
+    con.add_argument("--journal-dir", type=Path, default=default_journal_dir())
+    con.add_argument("--no-window", dest="window", action="store_false", help="don't open a window")
+
     sub.add_parser("setup", help="download the neural voice model (about 350 MB, once)")
     sub.add_parser("voices", help="list available voices")
 
@@ -84,6 +93,11 @@ def main(argv: list[str] | None = None) -> int:
             for name in names:
                 print(f"  {name}")
         return 0
+
+    if args.command == "console":
+        from .console import serve
+
+        return serve(args.port, args.voice, args.speed, args.speak, args.model, args.journal_dir, args.window)
 
     if args.command == "setup":
         return download_models()
