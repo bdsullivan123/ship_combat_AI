@@ -247,6 +247,16 @@ Urgent warnings run locally and use fixed rules, so they never wait on a network
 - [ ] Advice such as pip management, weapon choice, and when to disengage
 - [ ] Confidence reporting: say "I can't confirm that" rather than guess
 
+### Autopilot — "TACCOM, plot a route and take us there" (started)
+The owner's call, made knowing that Frontier's terms forbid automation: run it in Solo. Plain jumps and fuel scooping only; neutron boosts stay manual, and it stops outside the destination station unless a Docking Computer is fitted.
+- [x] Navigation frame capture while flying (`taccom run --capture-nav`)
+- [x] Keyboard binds for pitch, yaw, throttle steps, next route system and galaxy map (secondary slots: F2–F9, K, I)
+- [x] Read the nav compass: direction to the target, ahead or behind, through head movement and star glare (Dolphin, 1080p)
+- [ ] Send keys the game accepts (hardware scan codes), with an abort key
+- [ ] Jump loop: target, align, jump, clear the star, scoop when low
+- [ ] Plot the route in the galaxy map from a spoken or typed destination
+- [ ] Handle trouble unattended: interdiction, low hull, overheating, anything unrecognised
+
 ---
 
 ## Code layout
@@ -260,6 +270,7 @@ Urgent warnings run locally and use fixed rules, so they never wait on a network
 | `taccom/speech.py` | Speech queue, neural voice with on-disk cache, Windows voice fallback |
 | `taccom/capture.py` | Elite window capture and labelled frame collection |
 | `taccom/hud.py` | Cockpit alignment, HUD layouts, the OCR reader, and the background HUD watcher |
+| `taccom/compass.py` | Reads the nav compass for the autopilot: which way, and how far, to turn |
 | `taccom/layouts/` | Reference frame for each calibrated cockpit |
 | `taccom/app.py` | Wiring, live loop, session recording and replay |
 | `taccom/console.py`, `taccom/console.html` | The ship's-computer console: local server, Claude Code link, telemetry, and the window |
