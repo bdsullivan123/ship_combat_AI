@@ -1,4 +1,4 @@
-"""Command line: python -m taccom [run|replay|console|align|voices|samples|hud|setup]"""
+"""Command line: python -m taccom [run|replay|console|align|jump|voices|samples|hud|setup]"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from .speech import DEFAULT_KOKORO_VOICE, list_voices, make_speaker
 ROOT = Path(__file__).resolve().parent.parent
 SESSIONS_DIR = ROOT / "sessions"
 SAMPLES_DIR = ROOT / "voice_samples"
-COMMANDS = ("run", "replay", "console", "align", "voices", "samples", "hud", "setup")
+COMMANDS = ("run", "replay", "console", "align", "jump", "voices", "samples", "hud", "setup")
 MODEL_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
 
 SAMPLE_LINE = ("Commander, wanted Imperial Clipper, Dangerous pilot. Shields down. Four pips to systems. "
@@ -76,6 +76,10 @@ def main(argv: list[str] | None = None) -> int:
     aln.add_argument("--delay", type=float, default=5.0, help="seconds to click back into the game (default 5)")
     aln.add_argument("--journal-dir", type=Path, default=default_journal_dir())
 
+    jmp = sub.add_parser("jump", help="autopilot test: one jump to the targeted system, then clear the star")
+    jmp.add_argument("--delay", type=float, default=5.0, help="seconds to click back into the game (default 5)")
+    jmp.add_argument("--journal-dir", type=Path, default=default_journal_dir())
+
     sub.add_parser("setup", help="download the neural voice model (about 350 MB, once)")
     sub.add_parser("voices", help="list available voices")
 
@@ -105,15 +109,16 @@ def main(argv: list[str] | None = None) -> int:
 
         return serve(args.port, args.voice, args.speed, args.speak, args.model, args.journal_dir, args.window)
 
-    if args.command == "align":
+    if args.command in ("align", "jump"):
         import time
 
-        from .autopilot import Aborted, align
+        from .autopilot import Aborted, align, jump_once
 
-        print(f"Click into Elite now. Aligning in {args.delay:.0f} seconds. Right Ctrl aborts.")
+        print(f"Click into Elite now. Starting in {args.delay:.0f} seconds. Right Ctrl aborts.")
         time.sleep(args.delay)
         try:
-            return 0 if align(args.journal_dir) else 1
+            fly = align if args.command == "align" else jump_once
+            return 0 if fly(args.journal_dir) else 1
         except Aborted as exc:
             print(f"Aborted: {exc}. Controls released.")
             return 1

@@ -1,7 +1,8 @@
 """Flies the ship: the autopilot, built up a step at a time.
 
-First step: `align`, which turns the ship to face the targeted system using
-the nav compass, then stops. No throttle, no jump.
+`align` turns the ship to face the targeted system using the nav compass.
+`jump_once` aligns, jumps, and on arrival cuts the throttle and pitches up
+off the star, then stops.
 
 Keys go to the game as hardware scan codes (Elite ignores ordinary simulated
 keypresses), and only while Elite is the active window. The binds are the
@@ -29,12 +30,15 @@ KEYS = {
     "pitch_up": 0x27,  # ;
     "pitch_down": 0x37,  # numpad *
 }
+JUMP = 0x24  # J: frame shift drive (hyperspace when a system is targeted)
+THROTTLE_ZERO = 0x2D  # X
 ABORT_VK = 0xA3  # Right Ctrl, unbound in the game
 
 ALIGNED = 2.0  # degrees; close enough to jump
 MAX_PULSE = 0.35  # seconds a turn key is held per step
 MIN_PULSE = 0.07  # shorter taps barely turned the Fer-de-Lance in the first live test
 SETTLE = 0.12  # seconds for the ship to stop turning and the HUD to catch up
+ARRIVAL_PITCH = 4.0  # seconds of pitch up after arriving, to turn the star off the nose
 
 
 class Aborted(Exception):
@@ -104,10 +108,11 @@ def steer(reading) -> dict[str, float]:
             return {"pitch_up" if reading.y >= 0 else "pitch_down": MAX_PULSE}
         return {"yaw_right" if reading.x > 0 else "yaw_left": MAX_PULSE}
     keys = {}
-    for axis, value, pos, neg, gain in (("y", reading.y, "pitch_up", "pitch_down", 0.30),
-                                        ("x", reading.x, "yaw_right", "yaw_left", 0.55)):
+    # Ships yaw about a third as fast as they pitch, so yaw taps start longer.
+    for value, pos, neg, base, gain in ((reading.y, "pitch_up", "pitch_down", MIN_PULSE, 0.30),
+                                        (reading.x, "yaw_right", "yaw_left", MIN_PULSE * 1.5, 0.55)):
         if abs(value) > 0.02:
-            keys[pos if value > 0 else neg] = min(MAX_PULSE, MIN_PULSE + gain * abs(value))
+            keys[pos if value > 0 else neg] = min(MAX_PULSE, base + gain * abs(value))
     return keys
 
 
@@ -197,3 +202,97 @@ def _pulse(keys: Keyboard, plan: dict[str, float]) -> None:
             keys.up(KEYS[name])
     finally:
         keys.release_all()
+
+
+# -- one jump ---------------------------------------------------------------------
+
+def jump_target(events: list[dict], status: dict) -> tuple[str, str] | None:
+    """(target system, current system) when a different star system is targeted, else None."""
+    here = target = None
+    for e in events:
+        if e.get("event") in ("Location", "FSDJump", "CarrierJump", "SupercruiseEntry", "SupercruiseExit"):
+            here = (e.get("StarSystem"), e.get("SystemAddress"))
+        elif e.get("event") == "FSDTarget":
+            target = (e.get("Name"), e.get("SystemAddress"))
+    dest = status.get("Destination") or {}
+    if not target or dest.get("System") != target[1] or dest.get("Body"):
+        return None  # nothing targeted, or a body or station in this system
+    if here and here[1] == target[1]:
+        return None
+    return target[0], here[0] if here else "?"
+
+
+def jump_once(journal_dir: Path, say=print) -> bool:
+    """Jump to the targeted system, then clear the arrival star. True on arrival; raises Aborted if stopped."""
+    from .sources import JournalTailer
+
+    tail = JournalTailer(journal_dir)
+    status = read_status(journal_dir)
+    target = jump_target(tail.read_existing(), status)
+    if target is None:
+        raise Aborted("no other star system is targeted")
+    flags = status.get("Flags", 0)
+    if flags & (Flags.DOCKED | Flags.LANDED):
+        raise Aborted("docked or landed")
+    if flags & Flags.FSD_MASS_LOCKED:
+        raise Aborted("mass-locked; move away from the station or ship first")
+    say(f"Jump: {target[1]} to {target[0]}.")
+
+    keys = Keyboard()
+    try:
+        _wait(journal_dir, lambda f: not f & Flags.FSD_COOLDOWN, 60, "the drive is still cooling down")
+        if not align(journal_dir, say=say):
+            raise Aborted("couldn't line up")
+        _tap(keys, JUMP)
+        say("Frame shift drive charging.")
+        jumped = arrived = None
+        deadline = time.monotonic() + 45
+        while not jumped:
+            if time.monotonic() > deadline:
+                raise Aborted("the jump didn't start")
+            _check_abort()
+            for e in tail.poll():
+                if e.get("event") == "StartJump" and e.get("JumpType") == "Hyperspace":
+                    jumped = e
+            time.sleep(0.1)
+        say(f"Jumping to {jumped.get('StarSystem', target[0])}.")
+        deadline = time.monotonic() + 90
+        while not arrived:
+            if time.monotonic() > deadline:
+                raise Aborted("no arrival in the journal")
+            for e in tail.poll():
+                if e.get("event") == "FSDJump":
+                    arrived = e
+            time.sleep(0.2)
+        say(f"Arrived in {arrived.get('StarSystem')}. Clearing the star.")
+        time.sleep(1.5)  # the arrival animation swallows the first moments of input
+        _tap(keys, THROTTLE_ZERO)
+        _pulse(keys, {"pitch_up": ARRIVAL_PITCH})
+        say("Star cleared. Holding at zero throttle.")
+        return True
+    finally:
+        keys.release_all()
+
+
+def _check_abort() -> None:
+    from .capture import elite_window_rect
+
+    if abort_pressed():
+        raise Aborted("Right Ctrl pressed")
+    if elite_window_rect() is None:
+        raise Aborted("Elite isn't the active window")
+
+
+def _wait(journal_dir: Path, ready, timeout: float, why: str) -> None:
+    deadline = time.monotonic() + timeout
+    while not ready(read_status(journal_dir).get("Flags", 0)):
+        if time.monotonic() > deadline:
+            raise Aborted(why)
+        _check_abort()
+        time.sleep(0.2)
+
+
+def _tap(keys: Keyboard, scan: int, hold: float = 0.1) -> None:
+    keys.down(scan)
+    time.sleep(hold)
+    keys.up(scan)

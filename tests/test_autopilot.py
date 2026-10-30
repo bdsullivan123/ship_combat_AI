@@ -19,7 +19,7 @@ def test_turns_toward_a_dot_down_and_to_the_left():
 
 
 def test_small_offsets_get_short_taps():
-    assert all(t < 0.12 for t in steer(reading(0.05, -0.05)).values())
+    assert all(t < 0.15 for t in steer(reading(0.05, -0.05)).values())
 
 
 def test_target_behind_turns_hard_the_short_way_round():
@@ -29,3 +29,14 @@ def test_target_behind_turns_hard_the_short_way_round():
 
 def test_centred_means_no_keys():
     assert steer(reading(0.01, -0.01)) == {}
+
+
+def test_jump_target_needs_another_star_system():
+    from taccom.autopilot import jump_target
+
+    here = {"event": "SupercruiseExit", "StarSystem": "Putas", "SystemAddress": 1}
+    vogulu = {"event": "FSDTarget", "Name": "Vogulu", "SystemAddress": 2}
+    assert jump_target([here, vogulu], {"Destination": {"System": 2, "Body": 0}}) == ("Vogulu", "Putas")
+    # A station in this system, or no target at all, is not a jump.
+    assert jump_target([here, vogulu], {"Destination": {"System": 1, "Body": 5}}) is None
+    assert jump_target([here], {}) is None
