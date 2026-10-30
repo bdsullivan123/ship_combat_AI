@@ -256,7 +256,7 @@ The owner's call, made knowing that Frontier's terms forbid automation: run it i
 - [x] Send keys the game accepts (hardware scan codes), with an abort key (Right Ctrl)
 - [x] One supervised jump (`taccom jump`, first done live 2026-10-30, Putas to Vogulu): align, full throttle, jump, cut throttle and pitch off the star
 - [x] Pre-jump checks: retract landing gear, cargo scoop and hardpoints itself; stop for mass lock, low fuel, an open panel, interdiction, danger or overheating
-- [ ] Jump loop: repeat along the route, scooping when low
+- [x] Route loop (`taccom route`): jump along the plotted route; with a fuel scoop, skim scoopable stars (KGBFOAM) under 60% fuel; without one, stop before a jump it can't fuel (not yet tested live)
 - [ ] Plot the route in the galaxy map from a spoken or typed destination
 - [ ] Handle trouble unattended: interdiction, low hull, overheating, anything unrecognised
 

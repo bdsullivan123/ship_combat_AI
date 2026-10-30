@@ -77,3 +77,22 @@ def test_extended_keys_are_sent_with_the_extended_flag(monkeypatch):
     kb.down(autopilot.CARGO_SCOOP)
     kb.up(autopilot.CARGO_SCOOP)
     assert sent == [(0x47, 0x8 | 0x1), (0x47, 0x8 | 0x1 | 0x2)]
+
+
+def test_ship_fit_reads_scoop_capacity_and_jump_fuel():
+    from taccom.autopilot import fuel_for_next_jump, ship_fit
+
+    events = [
+        {"event": "Loadout", "Ship": "dolphin", "FuelCapacity": {"Main": 16.0},
+         "Modules": [{"Item": "int_fuelscoop_size5_class3"}]},
+        {"event": "FSDJump", "FuelUsed": 1.2},
+        {"event": "FSDJump", "FuelUsed": 2.1},
+    ]
+    fit = ship_fit(events)
+    assert fit == {"ship": "dolphin", "capacity": 16.0, "scoop": True, "jump_fuel": 2.1}
+    assert fuel_for_next_jump(fit, 3.0) and not fuel_for_next_jump(fit, 2.5)
+
+    fdl = ship_fit([{"event": "Loadout", "Ship": "ferdelance", "FuelCapacity": {"Main": 8.0},
+                     "Modules": [{"Item": "int_fueltank_size3_class3"}]}])
+    assert fdl["scoop"] is False and fdl["jump_fuel"] is None
+    assert fuel_for_next_jump(fdl, 2.7) and not fuel_for_next_jump(fdl, 2.5)  # assumes a quarter tank

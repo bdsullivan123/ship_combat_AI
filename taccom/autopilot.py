@@ -2,7 +2,8 @@
 
 `align` turns the ship to face the targeted system using the nav compass.
 `jump_once` aligns, jumps, and on arrival cuts the throttle and pitches up
-off the star, then stops.
+off the star, then stops. `fly_route` repeats that along the plotted route,
+scooping fuel on the way if the ship has a scoop.
 
 Keys go to the game as hardware scan codes (Elite ignores ordinary simulated
 keypresses), and only while Elite is the active window. The binds are the
@@ -32,6 +33,9 @@ KEYS = {
 }
 JUMP = 0x24  # J: frame shift drive (hyperspace when a system is targeted)
 THROTTLE_ZERO = 0x2D  # X
+THROTTLE_25 = 0x53  # numpad .
+THROTTLE_75 = 0x4A  # numpad -
+TARGET_NEXT = 0x25  # K: next system in route
 THROTTLE_FULL = 0x29  # ` (100%); a hyperspace jump only engages at full throttle
 LANDING_GEAR = 0x26  # L
 HARDPOINTS = 0x16  # U
@@ -39,6 +43,7 @@ CARGO_SCOOP = 0xE047  # Home (an extended key)
 ABORT_VK = 0xA3  # Right Ctrl, unbound in the game
 
 ALIGNED = 3.5  # degrees; the game jumps from further off than this, and chasing less made the aim hunt
+HOLD_ALIGNED = 8.0  # while the drive charges; tighter made it hunt, and the game engaged at ~6
 MAX_PULSE = 0.35  # seconds a turn key is held per step
 MIN_PULSE = 0.07  # shorter taps barely turned the Fer-de-Lance in the first live test
 SETTLE = 0.12  # seconds for the ship to stop turning and the HUD to catch up
@@ -46,6 +51,10 @@ SETTLE_NEAR = 0.3  # within NEAR_ANGLE the ship is still coasting from the last 
 NEAR_ANGLE = 10.0
 JUMP_SUSPECT = 25.0  # degrees; the ship can't really turn this far between two readings
 ARRIVAL_PITCH = 6.0  # seconds of pitch up after arriving; 4 left the star filling the lower canopy
+SCOOPABLE = set("KGBFOAM")
+SCOOP_BELOW = 0.6  # scoop when the tank is under this fraction of capacity
+SCOOP_FULL = 0.97
+SCOOP_TIMEOUT = 120.0
 
 
 class Aborted(Exception):
@@ -149,18 +158,30 @@ def current_ship(journal_dir: Path) -> str | None:
     return ship.lower() if ship else None
 
 
-def align(journal_dir: Path, timeout: float = 90.0, say=print, until=None) -> bool:
+_grabber = None
+
+
+def _screen():
+    global _grabber
+    if _grabber is None:
+        from .capture import ScreenGrabber
+
+        _grabber = ScreenGrabber()  # one per process: the capture library refuses a second
+    return _grabber
+
+
+def align(journal_dir: Path, timeout: float = 90.0, say=print, until=None,
+          tolerance: float = ALIGNED) -> bool:
     """Turn to face the targeted system. True once aligned; raises Aborted if stopped.
 
-    With `until` (a function called each step), keep the aim instead of
-    returning when aligned, and return True once `until()` is true.
+    With `until` (a function called each step), keep the aim within `tolerance`
+    instead of returning when aligned, and return True once `until()` is true.
     """
-    from .capture import ScreenGrabber, elite_window_rect
+    from .capture import elite_window_rect
     from .compass import read_compass
 
-    grabber, keys = ScreenGrabber(), Keyboard()
+    grabber, keys = _screen(), Keyboard()
     ship = current_ship(journal_dir)
-    say(f"Flying the {ship or 'unknown ship'}.")
     deadline = time.monotonic() + timeout
     steady = misses = 0
     last = suspect = None
@@ -193,7 +214,7 @@ def align(journal_dir: Path, timeout: float = 90.0, say=print, until=None) -> bo
                 time.sleep(0.03)
                 continue
             suspect, last = None, reading
-            if not reading.behind and reading.angle < ALIGNED:
+            if not reading.behind and reading.angle < tolerance:
                 steady += 1
                 if steady >= 3 and until is None:
                     say(f"Aligned, {reading.angle:.1f} degrees off.")
@@ -306,54 +327,180 @@ def jump_once(journal_dir: Path, say=print) -> bool:
     from .sources import JournalTailer
 
     tail = JournalTailer(journal_dir)
-    status = read_status(journal_dir)
-    target = jump_target(tail.read_existing(), status)
+    target = jump_target(tail.read_existing(), read_status(journal_dir))
     if target is None:
         raise Aborted("no other star system is targeted")
-    say(f"Jump: {target[1]} to {target[0]}.")
-
     keys = Keyboard()
     try:
-        preflight(journal_dir, keys, say)
-        _wait(journal_dir, lambda f: not f & Flags.FSD_COOLDOWN, 60, "the drive is still cooling down")
-        if not align(journal_dir, say=say):
-            raise Aborted("couldn't line up")
-        _tap(keys, THROTTLE_FULL)
-        if read_status(journal_dir).get("Flags", 0) & Flags.FSD_CHARGING:
-            say("Full throttle. The drive was already charging.")  # J again would cancel it
-        else:
-            _tap(keys, JUMP)
-            say("Full throttle. Frame shift drive charging.")
-        jumped = arrived = None
-
-        def started():
-            nonlocal jumped
-            for e in tail.poll():
-                if e.get("event") == "StartJump" and e.get("JumpType") == "Hyperspace":
-                    jumped = e
-            return jumped is not None
-
-        # Hold the aim through the charge: moving forward drifts the nose.
-        if not align(journal_dir, timeout=45, say=say, until=started):
-            raise Aborted("the jump didn't start")
-        say(f"Jumping to {jumped.get('StarSystem', target[0])}.")
-        deadline = time.monotonic() + 90
-        while not arrived:
-            if time.monotonic() > deadline:
-                raise Aborted("no arrival in the journal")
-            for e in tail.poll():
-                if e.get("event") == "FSDJump":
-                    arrived = e
-            time.sleep(0.2)
-        say(f"Arrived in {arrived.get('StarSystem')}. Clearing the star.")
-        time.sleep(1.5)  # the arrival animation swallows the first moments of input
-        _tap(keys, THROTTLE_ZERO)
-        _pulse(keys, {"pitch_up": ARRIVAL_PITCH})
+        _jump(journal_dir, keys, tail, target, say)
+        _clear_star(keys)
         say("Star cleared. Holding at zero throttle.")
         return True
     finally:
         keys.release_all()
 
+
+def _jump(journal_dir: Path, keys: Keyboard, tail, target: tuple[str, str], say) -> tuple[dict, str]:
+    """Checks, align, full throttle, J, hold the aim, ride it out. Returns (FSDJump event, star class)."""
+    say(f"Jump: {target[1]} to {target[0]}.")
+    preflight(journal_dir, keys, say)
+    _wait(journal_dir, lambda f: not f & Flags.FSD_COOLDOWN, 60, "the drive is still cooling down")
+    if not align(journal_dir, say=say):
+        raise Aborted("couldn't line up")
+    say("Aligned.")
+    _tap(keys, THROTTLE_FULL)
+    if read_status(journal_dir).get("Flags", 0) & Flags.FSD_CHARGING:
+        say("Full throttle. The drive was already charging.")  # J again would cancel it
+    else:
+        _tap(keys, JUMP)
+        say("Full throttle. Frame shift drive charging.")
+    jumped = arrived = None
+
+    def started():
+        nonlocal jumped
+        for e in tail.poll():
+            if e.get("event") == "StartJump" and e.get("JumpType") == "Hyperspace":
+                jumped = e
+        return jumped is not None
+
+    # Hold the aim through the charge: moving forward drifts the nose.
+    if not align(journal_dir, timeout=45, say=lambda _: None, until=started, tolerance=HOLD_ALIGNED):
+        raise Aborted("the jump didn't start")
+    star = jumped.get("StarClass", "")
+    say(f"Jumping to {jumped.get('StarSystem', target[0])} (class {star or '?'} star).")
+    deadline = time.monotonic() + 90
+    while not arrived:
+        if time.monotonic() > deadline:
+            raise Aborted("no arrival in the journal")
+        for e in tail.poll():
+            if e.get("event") == "FSDJump":
+                arrived = e
+        time.sleep(0.2)
+    say(f"Arrived in {arrived.get('StarSystem')}.")
+    time.sleep(1.5)  # the arrival animation swallows the first moments of input
+    _tap(keys, THROTTLE_ZERO)
+    return arrived, star
+
+
+def _clear_star(keys: Keyboard) -> None:
+    _tap(keys, THROTTLE_ZERO)
+    _pulse(keys, {"pitch_up": ARRIVAL_PITCH})
+
+
+# -- along a route ------------------------------------------------------------------
+
+def ship_fit(events: list[dict]) -> dict:
+    """From the last Loadout: ship, fuel capacity, whether a fuel scoop is fitted,
+    and the most fuel a recent jump has used in it."""
+    fit = {"ship": None, "capacity": None, "scoop": False, "jump_fuel": None}
+    used: list[float] = []
+    for e in events:
+        if e.get("event") == "Loadout":
+            fit = {"ship": e.get("Ship"), "capacity": (e.get("FuelCapacity") or {}).get("Main"),
+                   "scoop": any("fuelscoop" in m.get("Item", "").lower() for m in e.get("Modules", [])),
+                   "jump_fuel": None}
+            used = []
+        elif e.get("event") == "FSDJump" and e.get("FuelUsed"):
+            used.append(float(e["FuelUsed"]))
+    if used:
+        fit["jump_fuel"] = max(used[-10:])
+    return fit
+
+
+def fuel_for_next_jump(fit: dict, fuel: float) -> bool:
+    """Enough fuel for another jump, with a margin. Unknown usage assumes a quarter tank."""
+    need = fit["jump_fuel"] or (fit["capacity"] or 8.0) * 0.25
+    return fuel >= need * 1.3
+
+
+def read_route(journal_dir: Path) -> list[str]:
+    try:
+        route = json.loads((journal_dir / "NavRoute.json").read_text(encoding="utf-8")).get("Route") or []
+    except (OSError, ValueError):
+        return []
+    return [hop.get("StarSystem") for hop in route]
+
+
+def fly_route(journal_dir: Path, say=print) -> bool:
+    """Jump along the plotted route to its end, scooping on the way if the ship can.
+    True on arrival at the final system; raises Aborted if stopped."""
+    from .sources import JournalTailer
+
+    tail = JournalTailer(journal_dir)
+    events = tail.read_existing()
+    route = read_route(journal_dir)
+    if len(route) < 2:
+        raise Aborted("no route plotted")
+    destination = route[-1]
+    say(f"Route to {destination}: {len(route) - 1} jumps.")
+    keys = Keyboard()
+    try:
+        while True:
+            status = read_status(journal_dir)
+            fit = ship_fit(events)
+            target = jump_target(events, status)
+            if target is None:
+                # The game normally targets the next hop after each jump; if not, ask it to.
+                _tap(keys, TARGET_NEXT)
+                time.sleep(1.0)
+                events += tail.poll()
+                target = jump_target(events, read_status(journal_dir))
+                if target is None:
+                    raise Aborted("couldn't target the next system in the route")
+            fuel = (read_status(journal_dir).get("Fuel") or {}).get("FuelMain", 0.0)
+            if not fuel_for_next_jump(fit, fuel):
+                raise Aborted(f"{fuel:.1f} t of fuel isn't enough for the next jump"
+                              + ("" if fit["scoop"] else " and there's no fuel scoop fitted"))
+            arrived, star = _jump(journal_dir, keys, tail, target, say)
+            events = tail.read_existing()  # the game may have started a new journal file mid-route
+            if arrived.get("StarSystem") == destination:
+                _clear_star(keys)
+                say(f"Arrived at {destination}. Route complete. Holding at zero throttle.")
+                return True
+            fuel = arrived.get("FuelLevel", 0.0)
+            capacity = fit["capacity"] or 0
+            if fit["scoop"] and star[:1] in SCOOPABLE and capacity and fuel < capacity * SCOOP_BELOW:
+                _scoop(journal_dir, keys, capacity, say)
+            else:
+                _clear_star(keys)
+            remaining = len(route) - 1 - route.index(arrived.get("StarSystem")) if arrived.get("StarSystem") in route else "?"
+            say(f"{remaining} jumps to go.")
+    finally:
+        keys.release_all()
+
+
+def _scoop(journal_dir: Path, keys: Keyboard, capacity: float, say) -> None:
+    """Skim the arrival star until the tank is full. The ship arrives facing the star,
+    close enough to scoop: turn it below the nose, creep along, and back off if hot."""
+    say("Scooping fuel.")
+    _pulse(keys, {"pitch_up": ARRIVAL_PITCH / 2})  # star at the bottom of the canopy
+    _tap(keys, THROTTLE_25)
+    deadline = time.monotonic() + SCOOP_TIMEOUT
+    last_scooping = time.monotonic()
+    while time.monotonic() < deadline:
+        _check_abort()
+        status = read_status(journal_dir)
+        flags, fuel = status.get("Flags", 0), (status.get("Fuel") or {}).get("FuelMain", 0.0)
+        if flags & Flags.BEING_INTERDICTED:
+            raise Aborted("interdiction! Your ship, Commander")
+        if flags & Flags.OVERHEATING:
+            say("Too hot. Backing off the star.")
+            _tap(keys, THROTTLE_75)
+            _pulse(keys, {"pitch_up": 1.5})
+            break
+        if fuel >= capacity * SCOOP_FULL:
+            say(f"Tank full, {fuel:.1f} t.")
+            break
+        if flags & Flags.SCOOPING_FUEL:
+            last_scooping = time.monotonic()
+        elif time.monotonic() - last_scooping > 15:
+            say(f"Out of scooping range; stopping at {fuel:.1f} t.")
+            break
+        time.sleep(0.5)
+    _clear_star(keys)
+
+
+# -- small helpers --------------------------------------------------------------------
 
 def _check_abort() -> None:
     from .capture import elite_window_rect
