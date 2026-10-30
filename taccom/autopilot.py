@@ -32,7 +32,7 @@ KEYS = {
 }
 JUMP = 0x24  # J: frame shift drive (hyperspace when a system is targeted)
 THROTTLE_ZERO = 0x2D  # X
-THROTTLE_50 = 0x4E  # numpad +; the drive won't engage at zero throttle
+THROTTLE_FULL = 0x29  # ` (100%); a hyperspace jump only engages at full throttle
 ABORT_VK = 0xA3  # Right Ctrl, unbound in the game
 
 ALIGNED = 2.0  # degrees; close enough to jump
@@ -259,12 +259,12 @@ def jump_once(journal_dir: Path, say=print) -> bool:
         _wait(journal_dir, lambda f: not f & Flags.FSD_COOLDOWN, 60, "the drive is still cooling down")
         if not align(journal_dir, say=say):
             raise Aborted("couldn't line up")
-        _tap(keys, THROTTLE_50)
+        _tap(keys, THROTTLE_FULL)
         if read_status(journal_dir).get("Flags", 0) & Flags.FSD_CHARGING:
-            say("Throttle 50%. The drive was already charging.")  # J again would cancel it
+            say("Full throttle. The drive was already charging.")  # J again would cancel it
         else:
             _tap(keys, JUMP)
-            say("Throttle 50%. Frame shift drive charging.")
+            say("Full throttle. Frame shift drive charging.")
         jumped = arrived = None
 
         def started():
