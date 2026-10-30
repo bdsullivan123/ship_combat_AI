@@ -5,7 +5,7 @@ the nav compass, then stops. No throttle, no jump.
 
 Keys go to the game as hardware scan codes (Elite ignores ordinary simulated
 keypresses), and only while Elite is the active window. The binds are the
-autopilot's secondary slots in the commander's Custom.4.2.binds. F11 aborts
+autopilot's secondary slots in the commander's Custom.4.2.binds. Right Ctrl aborts
 at any time; so does switching away from the game.
 
 The owner chose to build this knowing Frontier's terms forbid automation.
@@ -22,13 +22,14 @@ from pathlib import Path
 from .flags import Flags
 
 # Scan codes for the binds TACCOM added (see the README's autopilot section).
+# Not the F-keys: on the commander's setup the game only acts on those with Ctrl held.
 KEYS = {
-    "yaw_left": 0x3F,  # F5
-    "yaw_right": 0x40,  # F6
-    "pitch_up": 0x41,  # F7
-    "pitch_down": 0x42,  # F8
+    "yaw_left": 0x33,  # ,
+    "yaw_right": 0x34,  # .
+    "pitch_up": 0x27,  # ;
+    "pitch_down": 0x37,  # numpad *
 }
-ABORT_VK = 0x7A  # F11, unbound in the game
+ABORT_VK = 0xA3  # Right Ctrl, unbound in the game
 
 ALIGNED = 2.0  # degrees; close enough to jump
 MAX_PULSE = 0.35  # seconds a turn key is held per step
@@ -146,7 +147,7 @@ def align(journal_dir: Path, timeout: float = 90.0, say=print) -> bool:
     try:
         while time.monotonic() < deadline:
             if abort_pressed():
-                raise Aborted("F11 pressed")
+                raise Aborted("Right Ctrl pressed")
             rect = elite_window_rect()
             if rect is None:
                 raise Aborted("Elite isn't the active window")
@@ -190,7 +191,7 @@ def _pulse(keys: Keyboard, plan: dict[str, float]) -> None:
         for name, hold in sorted(plan.items(), key=lambda kv: kv[1]):
             while time.monotonic() - start < hold:
                 if abort_pressed():
-                    raise Aborted("F11 pressed")
+                    raise Aborted("Right Ctrl pressed")
                 time.sleep(0.01)
             keys.up(KEYS[name])
     finally:

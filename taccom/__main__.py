@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     con.add_argument("--journal-dir", type=Path, default=default_journal_dir())
     con.add_argument("--no-window", dest="window", action="store_false", help="don't open a window")
 
-    aln = sub.add_parser("align", help="autopilot test: turn to face the targeted system, then stop (F11 aborts)")
+    aln = sub.add_parser("align", help="autopilot test: turn to face the targeted system, then stop (Right Ctrl aborts)")
     aln.add_argument("--delay", type=float, default=5.0, help="seconds to click back into the game (default 5)")
     aln.add_argument("--journal-dir", type=Path, default=default_journal_dir())
 
@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
 
         from .autopilot import Aborted, align
 
-        print(f"Click into Elite now. Aligning in {args.delay:.0f} seconds. F11 aborts.")
+        print(f"Click into Elite now. Aligning in {args.delay:.0f} seconds. Right Ctrl aborts.")
         time.sleep(args.delay)
         try:
             return 0 if align(args.journal_dir) else 1

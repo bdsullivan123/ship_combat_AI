@@ -250,9 +250,9 @@ Urgent warnings run locally and use fixed rules, so they never wait on a network
 ### Autopilot — "TACCOM, plot a route and take us there" (started)
 The owner's call, made knowing that Frontier's terms forbid automation: run it in Solo. Plain jumps and fuel scooping only; neutron boosts stay manual, and it stops outside the destination station unless a Docking Computer is fitted.
 - [x] Navigation frame capture while flying (`taccom run --capture-nav`)
-- [x] Keyboard binds for pitch, yaw, throttle steps, next route system and galaxy map (secondary slots: F2–F9, K, I)
+- [x] Keyboard binds for pitch, yaw, throttle steps, next route system and galaxy map (secondary slots on keys nothing else uses: , . ; ` and numpad * . + −, plus K and I; not the F-keys, which the game only took with Ctrl held)
 - [x] Read the nav compass: direction to the target, ahead or behind, through head movement and star glare (Dolphin, 1080p)
-- [ ] Send keys the game accepts (hardware scan codes), with an abort key
+- [x] Send keys the game accepts (hardware scan codes), with an abort key (Right Ctrl)
 - [ ] Jump loop: target, align, jump, clear the star, scoop when low
 - [ ] Plot the route in the galaxy map from a spoken or typed destination
 - [ ] Handle trouble unattended: interdiction, low hull, overheating, anything unrecognised
