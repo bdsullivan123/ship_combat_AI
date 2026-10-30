@@ -32,6 +32,7 @@ KEYS = {
 }
 JUMP = 0x24  # J: frame shift drive (hyperspace when a system is targeted)
 THROTTLE_ZERO = 0x2D  # X
+THROTTLE_50 = 0x4E  # numpad +; the drive won't engage at zero throttle
 ABORT_VK = 0xA3  # Right Ctrl, unbound in the game
 
 ALIGNED = 2.0  # degrees; close enough to jump
@@ -140,8 +141,12 @@ def current_ship(journal_dir: Path) -> str | None:
     return ship.lower() if ship else None
 
 
-def align(journal_dir: Path, timeout: float = 90.0, say=print) -> bool:
-    """Turn to face the targeted system. True once aligned; raises Aborted if stopped."""
+def align(journal_dir: Path, timeout: float = 90.0, say=print, until=None) -> bool:
+    """Turn to face the targeted system. True once aligned; raises Aborted if stopped.
+
+    With `until` (a function called each step), keep the aim instead of
+    returning when aligned, and return True once `until()` is true.
+    """
     from .capture import ScreenGrabber, elite_window_rect
     from .compass import read_compass
 
@@ -152,6 +157,8 @@ def align(journal_dir: Path, timeout: float = 90.0, say=print) -> bool:
     steady = misses = 0
     try:
         while time.monotonic() < deadline:
+            if until is not None and until():
+                return True
             if abort_pressed():
                 raise Aborted("Right Ctrl pressed")
             rect = elite_window_rect()
@@ -164,14 +171,14 @@ def align(journal_dir: Path, timeout: float = 90.0, say=print) -> bool:
             reading = read_compass(frame, ship) if frame is not None else None
             if reading is None:
                 misses += 1
-                if misses > 40:
+                if misses > 40 and until is None:
                     raise Aborted("can't see the compass (no target selected?)")
                 time.sleep(0.05)
                 continue
             misses = 0
             if not reading.behind and reading.angle < ALIGNED:
                 steady += 1
-                if steady >= 3:
+                if steady >= 3 and until is None:
                     say(f"Aligned, {reading.angle:.1f} degrees off.")
                     return True
                 time.sleep(SETTLE)
@@ -243,18 +250,21 @@ def jump_once(journal_dir: Path, say=print) -> bool:
         _wait(journal_dir, lambda f: not f & Flags.FSD_COOLDOWN, 60, "the drive is still cooling down")
         if not align(journal_dir, say=say):
             raise Aborted("couldn't line up")
+        _tap(keys, THROTTLE_50)
         _tap(keys, JUMP)
-        say("Frame shift drive charging.")
+        say("Throttle 50%. Frame shift drive charging.")
         jumped = arrived = None
-        deadline = time.monotonic() + 45
-        while not jumped:
-            if time.monotonic() > deadline:
-                raise Aborted("the jump didn't start")
-            _check_abort()
+
+        def started():
+            nonlocal jumped
             for e in tail.poll():
                 if e.get("event") == "StartJump" and e.get("JumpType") == "Hyperspace":
                     jumped = e
-            time.sleep(0.1)
+            return jumped is not None
+
+        # Hold the aim through the charge: moving forward drifts the nose.
+        if not align(journal_dir, timeout=45, say=say, until=started):
+            raise Aborted("the jump didn't start")
         say(f"Jumping to {jumped.get('StarSystem', target[0])}.")
         deadline = time.monotonic() + 90
         while not arrived:
