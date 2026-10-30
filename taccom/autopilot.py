@@ -116,12 +116,31 @@ def read_status(journal_dir: Path) -> dict:
         return {}
 
 
+def current_ship(journal_dir: Path) -> str | None:
+    """The ship type from the newest journal's last Loadout or LoadGame, e.g. "ferdelance"."""
+    from .sources import newest_journal
+
+    path = newest_journal(journal_dir)
+    ship = None
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if '"Loadout"' in line or '"LoadGame"' in line or '"ShipyardSwap"' in line:
+                    event = json.loads(line)
+                    ship = event.get("Ship") or event.get("ShipType") or ship
+    except (OSError, TypeError, ValueError):
+        pass
+    return ship.lower() if ship else None
+
+
 def align(journal_dir: Path, timeout: float = 90.0, say=print) -> bool:
     """Turn to face the targeted system. True once aligned; raises Aborted if stopped."""
     from .capture import ScreenGrabber, elite_window_rect
     from .compass import read_compass
 
     grabber, keys = ScreenGrabber(), Keyboard()
+    ship = current_ship(journal_dir)
+    say(f"Flying the {ship or 'unknown ship'}.")
     deadline = time.monotonic() + timeout
     steady = misses = 0
     try:
@@ -135,7 +154,7 @@ def align(journal_dir: Path, timeout: float = 90.0, say=print) -> bool:
             if flags & (Flags.DOCKED | Flags.LANDED):
                 raise Aborted("docked or landed")
             frame = grabber.grab(rect)
-            reading = read_compass(frame) if frame is not None else None
+            reading = read_compass(frame, ship) if frame is not None else None
             if reading is None:
                 misses += 1
                 if misses > 40:

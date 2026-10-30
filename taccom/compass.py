@@ -23,6 +23,16 @@ BASE_SIZE = (1920, 1080)
 SEARCH = (350, 600, 1150, 1080)  # where the compass can be, head movement included
 RADII = range(22, 42, 2)  # ring radius in px; leaning in or out changes it
 MIN_RING_SCORE = 0.42  # below this the compass isn't on screen (galaxy map, hyperspace, looking away)
+
+# Where each cockpit's compass sits with the head centred: (x, y, ring radius) at 1080p.
+# Knowing the ship narrows the search to the head's reach around that spot, which
+# rules out look-alike arcs elsewhere and lets a dimmer compass through.
+COCKPITS = {
+    "dolphin": (722, 866, 30),
+    "ferdelance": (722, 823, 27),
+}
+HEAD_ROOM = 180  # px the head can carry the compass from its usual spot
+MIN_RING_SCORE_KNOWN = 0.30
 MIN_DOT = 25  # band-pass strength of the dot in the blue channel
 LIT_RING = 100  # blue level of a ring lit cyan or white by a nearby star
 
@@ -54,29 +64,39 @@ def _ring(radius: int):
 _RINGS = {r: _ring(r) for r in RADII}
 
 
-def find_compass(frame) -> tuple[int, int, int, float] | None:
-    """(x, y, radius, score) of the compass ring in a BGR frame, or None if it isn't visible."""
+def find_compass(frame, ship: str | None = None) -> tuple[int, int, int, float] | None:
+    """(x, y, radius, score) of the compass ring in a BGR frame, or None if it isn't visible.
+
+    `ship` is the journal's ship type (e.g. "dolphin"); unknown ships get the wide search.
+    """
     import cv2
 
-    x0, y0, x1, y1 = _scaled(SEARCH, frame)
+    cockpit = COCKPITS.get((ship or "").lower())
+    if cockpit:
+        cx, cy, cr = cockpit
+        box = (cx - HEAD_ROOM, cy - HEAD_ROOM, cx + HEAD_ROOM, min(BASE_SIZE[1], cy + HEAD_ROOM))
+        rings, threshold = {r: t for r, t in _RINGS.items() if abs(r - cr) <= 8}, MIN_RING_SCORE_KNOWN
+    else:
+        box, rings, threshold = SEARCH, _RINGS, MIN_RING_SCORE
+    x0, y0, x1, y1 = _scaled(box, frame)
     v = frame[y0:y1, x0:x1].max(axis=2).astype(np.float32)
     v = v - cv2.GaussianBlur(v, (0, 0), 6)  # local contrast: glare and dashboard shading drop out
     if v.std() < 2:
         return None  # a blank screen (hyperspace tunnel, loading) matches anything
     best = None
-    for r, t in _RINGS.items():
+    for r, t in rings.items():
         scores = cv2.matchTemplate(v, t, cv2.TM_CCOEFF_NORMED)
         _, score, _, (lx, ly) = cv2.minMaxLoc(scores)
         if best is None or score > best[3]:
             best = (x0 + lx + t.shape[1] // 2, y0 + ly + t.shape[0] // 2, r, score)
-    return best if best and best[3] >= MIN_RING_SCORE else None
+    return best if best and best[3] >= threshold else None
 
 
-def read_compass(frame) -> CompassReading | None:
+def read_compass(frame, ship: str | None = None) -> CompassReading | None:
     """Where the compass dot points, or None if the compass or its dot can't be seen."""
     import cv2
 
-    found = find_compass(frame)
+    found = find_compass(frame, ship)
     if found is None:
         return None
     cx, cy, r, _ = found
