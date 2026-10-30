@@ -29,6 +29,10 @@ ELITE_WINDOW_TITLE = "Elite - Dangerous (CLIENT)"
 # Journal events whose values are also visible on the HUD.
 LABEL_EVENTS = {"HullDamage", "ShieldState", "ShipTargeted", "HeatWarning", "HeatDamage",
                 "UnderAttack", "Bounty", "FighterDestroyed", "CockpitBreached"}
+# Navigation mode (autopilot groundwork): jumps, route targeting, scooping and
+# interdictions, with frames throughout flight to calibrate the compass reader.
+NAV_EVENTS = {"FSDTarget", "StartJump", "FSDJump", "SupercruiseEntry", "SupercruiseExit", "FuelScoop",
+              "NavRoute", "Interdicted", "EscapeInterdiction", "HeatWarning", "DockingRequested", "Docked"}
 UNDER_ATTACK_EVERY = 5.0  # seconds; it fires constantly in a fight
 
 
@@ -98,8 +102,9 @@ def state_labels(state: ShipState) -> dict:
 
 class FrameCollector:
     def __init__(self, directory: Path, interval: float = 2.0, max_frames: int = 1500,
-                 grabber: ScreenGrabber | None = None, window=elite_window_rect):
+                 grabber: ScreenGrabber | None = None, window=elite_window_rect, nav: bool = False):
         self.directory = directory
+        self.nav = nav
         self.interval = interval
         self.max_frames = max_frames
         self.saved = 0
@@ -116,7 +121,7 @@ class FrameCollector:
 
     def on_journal(self, event: dict, state: ShipState, now: float) -> None:
         name = event.get("event")
-        if name not in LABEL_EVENTS or state.destroyed:
+        if name not in (NAV_EVENTS if self.nav else LABEL_EVENTS) or state.destroyed:
             return
         if name == "ShipTargeted" and not event.get("TargetLocked"):
             return
@@ -127,8 +132,11 @@ class FrameCollector:
         self._request(name, event, state)
 
     def tick(self, state: ShipState, now: float) -> None:
-        fighting = (state.in_combat or bool(state.flags & Flags.HARDPOINTS_DEPLOYED)) and not state.destroyed
-        if fighting and now - self._last_periodic >= self.interval:
+        if self.nav:
+            active = not state.flags & (Flags.DOCKED | Flags.LANDED) and bool(state.flags & Flags.IN_MAIN_SHIP)
+        else:
+            active = state.in_combat or bool(state.flags & Flags.HARDPOINTS_DEPLOYED)
+        if active and not state.destroyed and now - self._last_periodic >= self.interval:
             self._last_periodic = now
             self._request("periodic", None, state)
 

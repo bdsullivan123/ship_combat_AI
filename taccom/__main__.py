@@ -51,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
                      help="don't read the screen (ammo, heat); game files only")
     run.add_argument("--capture", action="store_true",
                      help="save labelled HUD frames during combat (Stage 2 calibration data)")
+    run.add_argument("--capture-nav", action="store_true",
+                     help="save labelled frames while flying and jumping (autopilot calibration data)")
     voice_options(run, "kokoro")
 
     rep = sub.add_parser("replay", help="replay a recorded session or a game journal")
@@ -145,11 +147,12 @@ def main(argv: list[str] | None = None) -> int:
     speaker = speaker_from(args)
     recorder = SessionRecorder(SESSIONS_DIR) if args.record else None
     collector = None
-    if args.capture:
+    if args.capture or args.capture_nav:
         from .capture import FrameCollector
 
-        frames_dir = SESSIONS_DIR / f"frames_{datetime.now():%Y-%m-%d_%H%M%S}"
-        collector = FrameCollector(frames_dir)
+        kind = "nav" if args.capture_nav else "frames"
+        frames_dir = SESSIONS_DIR / f"{kind}_{datetime.now():%Y-%m-%d_%H%M%S}"
+        collector = FrameCollector(frames_dir, interval=1.0 if args.capture_nav else 2.0, nav=args.capture_nav)
         print(f"[taccom] Capturing labelled HUD frames to {frames_dir}")
     watcher = None
     if args.hud:
