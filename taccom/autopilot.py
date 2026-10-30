@@ -39,6 +39,7 @@ ALIGNED = 2.0  # degrees; close enough to jump
 MAX_PULSE = 0.35  # seconds a turn key is held per step
 MIN_PULSE = 0.07  # shorter taps barely turned the Fer-de-Lance in the first live test
 SETTLE = 0.12  # seconds for the ship to stop turning and the HUD to catch up
+JUMP_SUSPECT = 25.0  # degrees; the ship can't really turn this far between two readings
 ARRIVAL_PITCH = 4.0  # seconds of pitch up after arriving, to turn the star off the nose
 
 
@@ -155,6 +156,7 @@ def align(journal_dir: Path, timeout: float = 90.0, say=print, until=None) -> bo
     say(f"Flying the {ship or 'unknown ship'}.")
     deadline = time.monotonic() + timeout
     steady = misses = 0
+    last = suspect = None
     try:
         while time.monotonic() < deadline:
             if until is not None and until():
@@ -176,6 +178,13 @@ def align(journal_dir: Path, timeout: float = 90.0, say=print, until=None) -> bo
                 time.sleep(0.05)
                 continue
             misses = 0
+            # A glint can fake a dot for one frame. A big jump from the last
+            # reading has to repeat before the ship acts on it.
+            if last is not None and abs(reading.angle - last.angle) > JUMP_SUSPECT and suspect is None:
+                suspect = reading
+                time.sleep(0.03)
+                continue
+            suspect, last = None, reading
             if not reading.behind and reading.angle < ALIGNED:
                 steady += 1
                 if steady >= 3 and until is None:
