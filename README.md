@@ -254,7 +254,9 @@ The owner's call, made knowing that Frontier's terms forbid automation: run it i
 - [x] First live test (2026-10-30): turned the Fer-de-Lance from 146° off to 0.2° aligned
 - [x] Read the nav compass: direction to the target, ahead or behind, through head movement and star glare (Dolphin, 1080p)
 - [x] Send keys the game accepts (hardware scan codes), with an abort key (Right Ctrl)
-- [ ] Jump loop: target, align, jump, clear the star, scoop when low
+- [x] One supervised jump (`taccom jump`, first done live 2026-10-30, Putas to Vogulu): align, full throttle, jump, cut throttle and pitch off the star
+- [x] Pre-jump checks: retract landing gear, cargo scoop and hardpoints itself; stop for mass lock, low fuel, an open panel, interdiction, danger or overheating
+- [ ] Jump loop: repeat along the route, scooping when low
 - [ ] Plot the route in the galaxy map from a spoken or typed destination
 - [ ] Handle trouble unattended: interdiction, low hull, overheating, anything unrecognised
 

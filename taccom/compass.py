@@ -34,7 +34,8 @@ COCKPITS = {
 HEAD_ROOM = 180  # px the head can carry the compass from its usual spot
 MIN_RING_SCORE_KNOWN = 0.30
 MIN_DOT = 25  # band-pass strength of the dot in the blue channel
-LIT_RING = 100  # blue level of a ring lit cyan or white by a nearby star
+LIT_RING = 100  # blue level of a ring lit cyan or white by a nearby star, or the charging drive
+NEAR_REACH = 0.4  # of the ring radius: how far the dot can move between two readings
 
 
 @dataclass(frozen=True)
@@ -92,8 +93,12 @@ def find_compass(frame, ship: str | None = None) -> tuple[int, int, int, float] 
     return best if best and best[3] >= threshold else None
 
 
-def read_compass(frame, ship: str | None = None) -> CompassReading | None:
-    """Where the compass dot points, or None if the compass or its dot can't be seen."""
+def read_compass(frame, ship: str | None = None, near: tuple[float, float] | None = None) -> CompassReading | None:
+    """Where the compass dot points, or None if the compass or its dot can't be seen.
+
+    `near` is the previous reading's (x, y): when several spots look like the
+    dot, the one closest to it wins.
+    """
     import cv2
 
     found = find_compass(frame, ship)
@@ -109,12 +114,23 @@ def read_compass(frame, ship: str | None = None) -> CompassReading | None:
     spots = cv2.GaussianBlur(blue, (0, 0), 1.5) - cv2.GaussianBlur(blue, (0, 0), 5)
     yy, xx = np.ogrid[:spots.shape[0], :spots.shape[1]]
     dist = np.sqrt((xx + x0 - cx) ** 2 + (yy + y0 - cy) ** 2)
-    if np.median(blue[np.abs(dist - r) <= 3]) > LIT_RING:
+    lit = np.median(blue[np.abs(dist - r) <= 3]) > LIT_RING
+    if lit:
         reach = r - 4  # a lit ring's glow outshines a dot on the rim; trust only the inside
     spots[dist > reach] = 0
     _, peak, _, (px, py) = cv2.minMaxLoc(spots)
     if peak < MIN_DOT:
         return None
+    # When the ring is lit, glints inside it (dashboard knobs, the glow itself)
+    # can rival the dot. The dot moves only a little between readings, so a
+    # spot near where it just was wins over a slightly stronger one elsewhere.
+    if lit and near is not None:
+        hx, hy = cx + near[0] * r - x0, cy - near[1] * r - y0
+        local = spots.copy()
+        local[(xx - hx) ** 2 + (yy - hy) ** 2 > (NEAR_REACH * r) ** 2] = 0
+        _, local_peak, _, local_at = cv2.minMaxLoc(local)
+        if local_peak >= max(MIN_DOT * 0.6, peak * 0.6):
+            px, py = local_at
     # The blob around the peak: a filled dot is bright in the middle, a hollow ring isn't.
     win = blue[max(0, py - 6):py + 7, max(0, px - 6):px + 7]
     _, mask = cv2.threshold(win, (win.max() + np.median(win)) / 2, 255, cv2.THRESH_BINARY)

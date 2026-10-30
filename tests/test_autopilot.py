@@ -40,3 +40,40 @@ def test_jump_target_needs_another_star_system():
     # A station in this system, or no target at all, is not a jump.
     assert jump_target([here, vogulu], {"Destination": {"System": 1, "Body": 5}}) is None
     assert jump_target([here], {}) is None
+
+
+def test_preflight_stops_for_what_it_cannot_fix():
+    from taccom.autopilot import preflight_problem
+    from taccom.flags import Flags
+
+    flying = int(Flags.IN_MAIN_SHIP | Flags.SHIELDS_UP)
+    assert preflight_problem({"Flags": flying}) is None
+    # Gear, scoop and hardpoints are fixed with a key press, so they aren't problems here.
+    assert preflight_problem({"Flags": flying | Flags.LANDING_GEAR_DOWN | Flags.HARDPOINTS_DEPLOYED}) is None
+    assert "mass-locked" in preflight_problem({"Flags": flying | Flags.FSD_MASS_LOCKED})
+    assert "interdiction" in preflight_problem({"Flags": flying | Flags.BEING_INTERDICTED})
+    assert "fuel" in preflight_problem({"Flags": flying | Flags.LOW_FUEL})
+    assert "panel" in preflight_problem({"Flags": flying, "GuiFocus": 6})
+    assert "own ship" in preflight_problem({"Flags": flying, "Flags2": 1})
+    assert "docked" in preflight_problem({"Flags": flying | Flags.DOCKED})
+
+
+def test_extended_keys_are_sent_with_the_extended_flag(monkeypatch):
+    import ctypes
+
+    from taccom import autopilot
+
+    sent = []
+
+    class FakeUser32:
+        @staticmethod
+        def SendInput(n, ref, size):
+            inp = ctypes.cast(ref, ctypes.POINTER(autopilot._Input)).contents
+            sent.append((inp.ki.wScan, inp.ki.dwFlags))
+            return 1
+
+    monkeypatch.setattr(ctypes.windll, "user32", FakeUser32, raising=False)
+    kb = autopilot.Keyboard()
+    kb.down(autopilot.CARGO_SCOOP)
+    kb.up(autopilot.CARGO_SCOOP)
+    assert sent == [(0x47, 0x8 | 0x1), (0x47, 0x8 | 0x1 | 0x2)]

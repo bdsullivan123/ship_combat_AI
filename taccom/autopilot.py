@@ -33,14 +33,19 @@ KEYS = {
 JUMP = 0x24  # J: frame shift drive (hyperspace when a system is targeted)
 THROTTLE_ZERO = 0x2D  # X
 THROTTLE_FULL = 0x29  # ` (100%); a hyperspace jump only engages at full throttle
+LANDING_GEAR = 0x26  # L
+HARDPOINTS = 0x16  # U
+CARGO_SCOOP = 0xE047  # Home (an extended key)
 ABORT_VK = 0xA3  # Right Ctrl, unbound in the game
 
-ALIGNED = 2.0  # degrees; close enough to jump
+ALIGNED = 3.5  # degrees; the game jumps from further off than this, and chasing less made the aim hunt
 MAX_PULSE = 0.35  # seconds a turn key is held per step
 MIN_PULSE = 0.07  # shorter taps barely turned the Fer-de-Lance in the first live test
 SETTLE = 0.12  # seconds for the ship to stop turning and the HUD to catch up
+SETTLE_NEAR = 0.3  # within NEAR_ANGLE the ship is still coasting from the last tap; wait it out
+NEAR_ANGLE = 10.0
 JUMP_SUSPECT = 25.0  # degrees; the ship can't really turn this far between two readings
-ARRIVAL_PITCH = 4.0  # seconds of pitch up after arriving, to turn the star off the nose
+ARRIVAL_PITCH = 6.0  # seconds of pitch up after arriving; 4 left the star filling the lower canopy
 
 
 class Aborted(Exception):
@@ -63,7 +68,7 @@ class _Input(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("u", _U)]
 
 
-KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE = 0x2, 0x8
+KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE = 0x1, 0x2, 0x8
 
 
 class Keyboard:
@@ -74,9 +79,11 @@ class Keyboard:
 
     def _send(self, scan: int, up: bool) -> None:
         flags = KEYEVENTF_SCANCODE | (KEYEVENTF_KEYUP if up else 0)
+        if scan > 0xFF:  # 0xE0xx: extended keys such as Home
+            flags |= KEYEVENTF_EXTENDEDKEY
         inp = _Input()
         inp.type = 1  # INPUT_KEYBOARD
-        inp.ki = _KeyBdInput(0, scan, flags, 0, 0)
+        inp.ki = _KeyBdInput(0, scan & 0xFF, flags, 0, 0)
         ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
 
     def down(self, scan: int) -> None:
@@ -166,11 +173,12 @@ def align(journal_dir: Path, timeout: float = 90.0, say=print, until=None) -> bo
             rect = elite_window_rect()
             if rect is None:
                 raise Aborted("Elite isn't the active window")
-            flags = read_status(journal_dir).get("Flags", 0)
-            if flags & (Flags.DOCKED | Flags.LANDED):
-                raise Aborted("docked or landed")
+            problem = in_flight_problem(read_status(journal_dir))
+            if problem:
+                raise Aborted(problem)
             frame = grabber.grab(rect)
-            reading = read_compass(frame, ship) if frame is not None else None
+            near = (last.x, last.y) if last is not None else None
+            reading = read_compass(frame, ship, near) if frame is not None else None
             if reading is None:
                 misses += 1
                 if misses > 40 and until is None:
@@ -197,7 +205,7 @@ def align(journal_dir: Path, timeout: float = 90.0, say=print, until=None) -> bo
             say(f"{'behind' if reading.behind else 'ahead '} {reading.angle:5.1f} deg  "
                 + " ".join(f"{k} {t:.2f}s" for k, t in plan.items()))
             _pulse(keys, plan)
-            time.sleep(SETTLE)
+            time.sleep(SETTLE_NEAR if reading.angle < NEAR_ANGLE else SETTLE)
         say("Couldn't align in time.")
         return False
     finally:
@@ -218,6 +226,61 @@ def _pulse(keys: Keyboard, plan: dict[str, float]) -> None:
             keys.up(KEYS[name])
     finally:
         keys.release_all()
+
+
+# -- safety ------------------------------------------------------------------------
+
+# Things that stop the frame shift drive and that a key press puts right.
+FIXABLE = (
+    (Flags.LANDING_GEAR_DOWN, LANDING_GEAR, "landing gear"),
+    (Flags.CARGO_SCOOP_DEPLOYED, CARGO_SCOOP, "cargo scoop"),
+    (Flags.HARDPOINTS_DEPLOYED, HARDPOINTS, "hardpoints"),
+)
+
+
+def in_flight_problem(status: dict) -> str | None:
+    """A reason to stop flying at once, or None. Checked every step."""
+    flags = status.get("Flags", 0)
+    if flags & (Flags.DOCKED | Flags.LANDED):
+        return "docked or landed"
+    if flags & Flags.BEING_INTERDICTED:
+        return "interdiction! Your ship, Commander"
+    if flags & Flags.IN_DANGER:
+        return "the game says we're in danger"
+    if flags & Flags.OVERHEATING:
+        return "overheating"
+    return None
+
+
+def preflight_problem(status: dict) -> str | None:
+    """A reason the jump can't go ahead that the autopilot can't fix, or None."""
+    problem = in_flight_problem(status)
+    if problem:
+        return problem
+    flags, flags2 = status.get("Flags", 0), status.get("Flags2", 0)
+    if not flags & Flags.IN_MAIN_SHIP or flags2 & 0b111:  # on foot, in a taxi, or multicrew
+        return "not flying our own ship"
+    if status.get("GuiFocus"):
+        return "a panel or map is open; close it first"
+    if flags & Flags.FSD_MASS_LOCKED:
+        return "mass-locked; fly clear of the station or ship first"
+    if flags & Flags.LOW_FUEL:
+        return "fuel is low; scoop or refuel first"
+    return None
+
+
+def preflight(journal_dir: Path, keys: Keyboard, say=print) -> None:
+    """Put right what a key press fixes (gear, cargo scoop, hardpoints); raise Aborted for the rest."""
+    status = read_status(journal_dir)
+    problem = preflight_problem(status)
+    if problem:
+        raise Aborted(problem)
+    for flag, key, name in FIXABLE:
+        if status.get("Flags", 0) & flag:
+            say(f"Retracting the {name}.")
+            _tap(keys, key)
+            _wait(journal_dir, lambda f, flag=flag: not f & flag, 5, f"the {name} wouldn't retract")
+            status = read_status(journal_dir)
 
 
 # -- one jump ---------------------------------------------------------------------
@@ -247,15 +310,11 @@ def jump_once(journal_dir: Path, say=print) -> bool:
     target = jump_target(tail.read_existing(), status)
     if target is None:
         raise Aborted("no other star system is targeted")
-    flags = status.get("Flags", 0)
-    if flags & (Flags.DOCKED | Flags.LANDED):
-        raise Aborted("docked or landed")
-    if flags & Flags.FSD_MASS_LOCKED:
-        raise Aborted("mass-locked; move away from the station or ship first")
     say(f"Jump: {target[1]} to {target[0]}.")
 
     keys = Keyboard()
     try:
+        preflight(journal_dir, keys, say)
         _wait(journal_dir, lambda f: not f & Flags.FSD_COOLDOWN, 60, "the drive is still cooling down")
         if not align(journal_dir, say=say):
             raise Aborted("couldn't line up")
