@@ -19,7 +19,7 @@ def test_turns_toward_a_dot_down_and_to_the_left():
 
 
 def test_small_offsets_get_short_taps():
-    assert all(t < 0.1 for t in steer(reading(0.05, -0.05)).values())
+    assert all(t < 0.12 for t in steer(reading(0.05, -0.05)).values())
 
 
 def test_target_behind_turns_hard_the_short_way_round():

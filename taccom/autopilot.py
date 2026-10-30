@@ -33,6 +33,7 @@ ABORT_VK = 0xA3  # Right Ctrl, unbound in the game
 
 ALIGNED = 2.0  # degrees; close enough to jump
 MAX_PULSE = 0.35  # seconds a turn key is held per step
+MIN_PULSE = 0.07  # shorter taps barely turned the Fer-de-Lance in the first live test
 SETTLE = 0.12  # seconds for the ship to stop turning and the HUD to catch up
 
 
@@ -106,7 +107,7 @@ def steer(reading) -> dict[str, float]:
     for axis, value, pos, neg, gain in (("y", reading.y, "pitch_up", "pitch_down", 0.30),
                                         ("x", reading.x, "yaw_right", "yaw_left", 0.55)):
         if abs(value) > 0.02:
-            keys[pos if value > 0 else neg] = min(MAX_PULSE, 0.03 + gain * abs(value))
+            keys[pos if value > 0 else neg] = min(MAX_PULSE, MIN_PULSE + gain * abs(value))
     return keys
 
 
