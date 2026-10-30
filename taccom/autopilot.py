@@ -251,8 +251,11 @@ def jump_once(journal_dir: Path, say=print) -> bool:
         if not align(journal_dir, say=say):
             raise Aborted("couldn't line up")
         _tap(keys, THROTTLE_50)
-        _tap(keys, JUMP)
-        say("Throttle 50%. Frame shift drive charging.")
+        if read_status(journal_dir).get("Flags", 0) & Flags.FSD_CHARGING:
+            say("Throttle 50%. The drive was already charging.")  # J again would cancel it
+        else:
+            _tap(keys, JUMP)
+            say("Throttle 50%. Frame shift drive charging.")
         jumped = arrived = None
 
         def started():
